@@ -1,0 +1,38 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+
+jobs:
+  test:
+    name: Rust Code Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend/api -> target
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path backend/api/Cargo.toml --all -- --check
+
+      - name: Run clippy linter
+        run: cargo clippy --manifest-path backend/api/Cargo.toml --all-targets -- -D warnings
+
+      - name: Run cargo tests
+        run: cargo test --manifest-path backend/api/Cargo.toml

@@ -1,0 +1,58 @@
+# ─────────────────────────────────────────────
+# WhatsApp Bulk Messaging Platform Gitignore
+# ─────────────────────────────────────────────
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-*
+
+# Build & Dependency Directories
+node_modules/
+backend/api/target/
+frontend/.next/
+frontend/out/
+
+# Local configuration files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+backend/api/.env
+frontend/.env.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+backend/api/*.log
+frontend/*.log
+
+# Database / Local storage mounts
+/volumes/
+minio_data/
+redis_data/
+n8n_data/
+db/local_postgres/
+
+# Diagnostics
+.gemini/
+/artifacts/
+
+# Telemetry and caching
+.next/cache/
+.eslintcache
+.turbo/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+

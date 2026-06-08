@@ -1,0 +1,156 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────
+#  Enterprise WhatsApp Bulk Messaging Platform
+#  Local Development Environment
+#
+#  NOTE: PostgreSQL is NOT included here.
+#  All developers share the Supabase instance.
+#  Set DATABASE_URL in backend/.env pointing
+#  to your Supabase connection string.
+# ─────────────────────────────────────────────
+
+networks:
+  whatsup_net:
+    driver: bridge
+
+volumes:
+  redis_data:
+  n8n_data:
+  minio_data:
+
+services:
+  # ─── Rust + Axum Backend API ───────────────
+  backend:
+    build:
+      context: ./backend/api
+      dockerfile: Dockerfile
+    container_name: whatsup_backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - RUST_LOG=info
+      - APP_ENV=development
+    env_file:
+      - ./backend/api/.env
+    depends_on:
+      - redis
+    networks:
+      - whatsup_net
+    volumes:
+      - ./backend/api:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ─── Next.js Frontend ──────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: whatsup_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+    env_file:
+      - ./frontend/.env.local
+    depends_on:
+      - backend
+    networks:
+      - whatsup_net
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+
+  # ─── Redis Cache ───────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: whatsup_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server /usr/local/etc/redis/redis.conf
+    volumes:
+      - redis_data:/data
+      - ./infrastructure/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - whatsup_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── n8n Workflow Automation ───────────────
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: whatsup_n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:-changeme}
+      - DB_TYPE=sqlite
+      - GENERIC_TIMEZONE=Asia/Kolkata
+      - TZ=Asia/Kolkata
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./infrastructure/n8n/workflows:/home/node/.n8n/workflows
+    networks:
+      - whatsup_net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:5678/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─── MinIO (S3-Compatible Object Storage) ──
+  minio:
+    image: minio/minio:latest
+    container_name: whatsup_minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console UI
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin123}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - whatsup_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─── Nginx Reverse Proxy ───────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: whatsup_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - frontend
+      - n8n
+    networks:
+      - whatsup_net

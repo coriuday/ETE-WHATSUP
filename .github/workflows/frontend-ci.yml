@@ -1,0 +1,44 @@
+name: Frontend CI
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'frontend/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'frontend/**'
+
+jobs:
+  lint-and-build:
+    name: Next.js Lints & Compile
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          bun install
+
+      - name: Run ESLint
+        run: |
+          cd frontend
+          bun run lint
+
+      - name: Run TypeScript checks
+        run: |
+          cd frontend
+          bun run type-check
+
+      - name: Build Next.js package
+        run: |
+          cd frontend
+          bun run build
