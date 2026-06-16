@@ -51,8 +51,34 @@ async fn verify_webhook(
 /// POST /api/v1/webhooks/whatsapp — Receive webhook events from Meta
 async fn receive_webhook(
     State(state): State<AppState>,
-    Json(payload): Json<MetaWebhookPayload>,
+    headers: axum::http::HeaderMap,
+    body_bytes: axum::body::Bytes,
 ) -> AppResult<StatusCode> {
+    // 1. Signature Verification
+    if let Some(signature_header) = headers.get("x-hub-signature-256").and_then(|v| v.to_str().ok()) {
+        if !signature_header.starts_with("sha256=") {
+            return Err(AppError::Forbidden);
+        }
+        let expected_hex = &signature_header["sha256=".len()..];
+        let key = state.config.meta_wa_app_secret.as_bytes();
+        let computed_hex = crate::utils::encryption::hmac_sha256_hex(key, &body_bytes);
+
+        if expected_hex != computed_hex {
+            tracing::warn!("Meta webhook signature verification failed");
+            return Err(AppError::Forbidden);
+        }
+    } else {
+        // If app secret is set and header is missing, reject
+        if !state.config.meta_wa_app_secret.is_empty() {
+            tracing::warn!("Missing x-hub-signature-256 header");
+            return Err(AppError::Forbidden);
+        }
+    }
+
+    // 2. Parse payload JSON
+    let payload: MetaWebhookPayload = serde_json::from_slice(&body_bytes)
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+
     tracing::debug!("Received WhatsApp webhook: {} entries", payload.entry.len());
 
     for entry in &payload.entry {

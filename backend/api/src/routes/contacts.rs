@@ -9,7 +9,7 @@ use validator::Validate;
 
 use crate::{
     errors::{AppError, AppResult},
-    middleware::auth::AuthUser,
+    middleware::rbac::{RequireOrgAdmin, RequireOrgViewer},
     models::{
         contact::{
             BulkActionRequest, ContactListQuery, CreateContactRequest, CreateGroupRequest,
@@ -42,7 +42,7 @@ pub fn router(state: AppState) -> Router {
 
 async fn list_contacts(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgViewer(auth): RequireOrgViewer,
     Query(query): Query<ContactListQuery>,
 ) -> AppResult<Json<ApiResponse<PaginatedResponse<serde_json::Value>>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -53,7 +53,7 @@ async fn list_contacts(
 
 async fn create_contact(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Json(req): Json<CreateContactRequest>,
 ) -> AppResult<(StatusCode, Json<ApiResponse<serde_json::Value>>)> {
     req.validate().map_err(|e| AppError::Validation(e.to_string()))?;
@@ -65,7 +65,7 @@ async fn create_contact(
 
 async fn get_contact(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgViewer(auth): RequireOrgViewer,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -76,7 +76,7 @@ async fn get_contact(
 
 async fn update_contact(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateContactRequest>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
@@ -88,7 +88,7 @@ async fn update_contact(
 
 async fn delete_contact(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<()>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -99,7 +99,7 @@ async fn delete_contact(
 
 async fn bulk_action(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Json(req): Json<BulkActionRequest>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -110,7 +110,7 @@ async fn bulk_action(
 
 async fn import_contacts(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     multipart: Multipart,
 ) -> AppResult<(StatusCode, Json<ApiResponse<serde_json::Value>>)> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -121,7 +121,7 @@ async fn import_contacts(
 
 async fn get_import_status(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgViewer(auth): RequireOrgViewer,
     Path(job_id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -132,7 +132,7 @@ async fn get_import_status(
 
 async fn list_groups(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgViewer(auth): RequireOrgViewer,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
     let service = ContactService::new(&state);
@@ -142,7 +142,7 @@ async fn list_groups(
 
 async fn create_group(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Json(req): Json<CreateGroupRequest>,
 ) -> AppResult<(StatusCode, Json<ApiResponse<serde_json::Value>>)> {
     req.validate().map_err(|e| AppError::Validation(e.to_string()))?;
@@ -154,7 +154,7 @@ async fn create_group(
 
 async fn get_group(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgViewer(auth): RequireOrgViewer,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -165,7 +165,7 @@ async fn get_group(
 
 async fn update_group(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
     Json(req): Json<CreateGroupRequest>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
@@ -177,7 +177,7 @@ async fn update_group(
 
 async fn delete_group(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<()>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -188,7 +188,7 @@ async fn delete_group(
 
 async fn get_group_contacts(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgViewer(auth): RequireOrgViewer,
     Path(id): Path<Uuid>,
     Query(query): Query<ContactListQuery>,
 ) -> AppResult<Json<ApiResponse<PaginatedResponse<serde_json::Value>>>> {
@@ -200,7 +200,7 @@ async fn get_group_contacts(
 
 async fn list_segments(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgViewer(auth): RequireOrgViewer,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
     let service = ContactService::new(&state);
@@ -210,7 +210,7 @@ async fn list_segments(
 
 async fn create_segment(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Json(body): Json<serde_json::Value>,
 ) -> AppResult<(StatusCode, Json<ApiResponse<serde_json::Value>>)> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -221,7 +221,7 @@ async fn create_segment(
 
 async fn delete_segment(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<()>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;

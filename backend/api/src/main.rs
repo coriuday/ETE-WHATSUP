@@ -3,7 +3,6 @@ use std::sync::Arc;
 use anyhow::Result;
 use axum::{
     http::{header, Method},
-    middleware,
     Router,
 };
 use sqlx::PgPool;
@@ -17,7 +16,7 @@ mod cache;
 mod config;
 mod db;
 mod errors;
-mod middleware as mw;
+mod middleware;
 mod models;
 mod routes;
 mod services;
@@ -52,6 +51,7 @@ async fn main() -> Result<()> {
     // ── Connect to database ────────────────────────────────────
     let db = db::create_pool(&config).await?;
     tracing::info!("Connected to Supabase PostgreSQL");
+    // db::run_migrations(&db).await?;
 
     // ── Connect to Redis ───────────────────────────────────────
     let redis = cache::create_redis_pool(&config).await?;
@@ -91,6 +91,13 @@ async fn main() -> Result<()> {
     let router = routes::create_router(state.clone())
         .layer(TraceLayer::new_for_http())
         .layer(cors);
+
+    // ── Start scheduler daemon ─────────────────────────────────
+    let scheduler_state = state.clone();
+    tokio::spawn(async move {
+        services::scheduler::run_scheduler(scheduler_state).await;
+    });
+    tracing::info!("Campaign scheduler daemon started");
 
     // ── Start server ───────────────────────────────────────────
     let addr = format!("0.0.0.0:{}", config.app_port);

@@ -33,6 +33,7 @@ pub struct Config {
     pub meta_wa_phone_number_id: String,
     pub meta_wa_waba_id: String,
     pub meta_wa_verify_token: String,
+    pub meta_wa_app_secret: String,
     pub meta_api_version: String,
     pub meta_api_base_url: String,
 
@@ -89,6 +90,7 @@ impl Config {
             .set_default("rate_limit_burst", 20)?
             .set_default("wa_messages_per_minute", 60)?
             .set_default("wa_messages_per_second", 1)?
+            .set_default("meta_wa_app_secret", "")?
             .set_default("meta_api_version", "v19.0")?
             .set_default("meta_api_base_url", "https://graph.facebook.com")?
             .set_default("allowed_origins", "http://localhost:3000")?

@@ -76,6 +76,25 @@ impl<'a> StorageService<'a> {
         Ok(presigned.uri().to_string())
     }
 
+    /// Download an object's bytes by key
+    pub async fn download_bytes(&self, key: &str) -> Result<bytes::Bytes> {
+        let client = self.build_client();
+        let output = client
+            .get_object()
+            .bucket(&self.state.config.s3_bucket)
+            .key(key)
+            .send()
+            .await?;
+
+        let data = output
+            .body
+            .collect()
+            .await
+            .map(|d| d.into_bytes())?;
+
+        Ok(data)
+    }
+
     /// Delete an object
     pub async fn delete(&self, key: &str) -> Result<()> {
         let client = self.build_client();

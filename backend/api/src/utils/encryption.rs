@@ -57,3 +57,23 @@ pub fn hash_password(password: &str) -> Result<String> {
 pub fn verify_password(password: &str, hash: &str) -> Result<bool> {
     bcrypt::verify(password, hash).context("Failed to verify password")
 }
+
+/// Compute SHA-256 hex digest of a string.
+/// Used to hash refresh tokens before storing in the DB.
+pub fn sha256_hex(input: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+/// Compute HMAC-SHA256 of `data` keyed with `key`, returning lowercase hex.
+/// Used for Meta webhook signature verification (X-Hub-Signature-256).
+pub fn hmac_sha256_hex(key: &[u8], data: &[u8]) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let mut mac = <Hmac<Sha256> as hmac::Mac>::new_from_slice(key)
+        .expect("HMAC accepts keys of any length");
+    mac.update(data);
+    hex::encode(mac.finalize().into_bytes())
+}

@@ -1,6 +1,12 @@
 use axum::{extract::{Path, State}, http::StatusCode, routing::{delete, get, post, put}, Json, Router};
 use uuid::Uuid;
-use crate::{errors::{AppError, AppResult}, middleware::auth::AuthUser, models::pagination::ApiResponse, AppState};
+use crate::{
+    errors::{AppError, AppResult},
+    middleware::rbac::{RequireOrgAdmin, RequireOrgViewer},
+    middleware::auth::AuthUser,
+    models::pagination::ApiResponse,
+    AppState,
+};
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -42,10 +48,24 @@ async fn create_org(State(state): State<AppState>, auth: AuthUser, Json(req): Js
     sqlx::query!("INSERT INTO org_members (organization_id, user_id, role) VALUES ($1, $2, 'owner')", id, auth.id)
         .execute(&state.db).await.map_err(AppError::Database)?;
 
+    crate::services::audit_service::audit_log(
+        &state,
+        "org.created",
+        Some(auth.id),
+        Some(id),
+        Some("organization"),
+        Some(id),
+        serde_json::json!({ "name": req.name, "slug": slug }),
+    );
+
     Ok((StatusCode::CREATED, Json(ApiResponse::ok(serde_json::json!({ "id": id })))))
 }
 
-async fn get_org(State(state): State<AppState>, auth: AuthUser, Path(id): Path<Uuid>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+async fn get_org(State(state): State<AppState>, RequireOrgViewer(auth): RequireOrgViewer, Path(id): Path<Uuid>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    if auth.role != crate::models::user::UserRole::SuperAdmin && Some(id) != auth.org_id {
+        return Err(AppError::Forbidden);
+    }
+
     let o = sqlx::query!(
         r#"SELECT id, name, slug, logo_url, website, industry, country, timezone, plan::text, status::text,
                   max_contacts, max_campaigns, monthly_msg_quota, msgs_sent_this_month, created_at
@@ -63,15 +83,34 @@ async fn get_org(State(state): State<AppState>, auth: AuthUser, Path(id): Path<U
     }))))
 }
 
-async fn update_org(State(state): State<AppState>, auth: AuthUser, Path(id): Path<Uuid>, Json(req): Json<crate::models::organization::UpdateOrganizationRequest>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+async fn update_org(State(state): State<AppState>, RequireOrgAdmin(auth): RequireOrgAdmin, Path(id): Path<Uuid>, Json(req): Json<crate::models::organization::UpdateOrganizationRequest>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    if auth.role != crate::models::user::UserRole::SuperAdmin && Some(id) != auth.org_id {
+        return Err(AppError::Forbidden);
+    }
+
     sqlx::query!(
         "UPDATE organizations SET name = COALESCE($1, name), logo_url = COALESCE($2, logo_url), website = COALESCE($3, website) WHERE id = $4",
         req.name, req.logo_url, req.website, id
     ).execute(&state.db).await.map_err(AppError::Database)?;
-    get_org(State(state), auth, Path(id)).await
+
+    crate::services::audit_service::audit_log(
+        &state,
+        "org.updated",
+        Some(auth.id),
+        Some(id),
+        Some("organization"),
+        Some(id),
+        serde_json::json!({ "name": req.name, "website": req.website }),
+    );
+
+    get_org(State(state), RequireOrgViewer(auth), Path(id)).await
 }
 
-async fn list_members(State(state): State<AppState>, auth: AuthUser, Path(id): Path<Uuid>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+async fn list_members(State(state): State<AppState>, RequireOrgViewer(auth): RequireOrgViewer, Path(id): Path<Uuid>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    if auth.role != crate::models::user::UserRole::SuperAdmin && Some(id) != auth.org_id {
+        return Err(AppError::Forbidden);
+    }
+
     let members = sqlx::query!(
         r#"SELECT u.id, u.email, u.first_name, u.last_name, u.avatar_url, om.role::text, om.joined_at
            FROM users u JOIN org_members om ON om.user_id = u.id WHERE om.organization_id = $1"#,
@@ -86,9 +125,13 @@ async fn list_members(State(state): State<AppState>, auth: AuthUser, Path(id): P
     Ok(Json(ApiResponse::ok(serde_json::json!({ "members": data }))))
 }
 
-async fn invite_member(State(state): State<AppState>, auth: AuthUser, Path(id): Path<Uuid>, Json(req): Json<crate::models::organization::InviteMemberRequest>) -> AppResult<(StatusCode, Json<ApiResponse<serde_json::Value>>)> {
+async fn invite_member(State(state): State<AppState>, RequireOrgAdmin(auth): RequireOrgAdmin, Path(id): Path<Uuid>, Json(req): Json<crate::models::organization::InviteMemberRequest>) -> AppResult<(StatusCode, Json<ApiResponse<serde_json::Value>>)> {
     use validator::Validate;
     req.validate().map_err(|e| AppError::Validation(e.to_string()))?;
+
+    if auth.role != crate::models::user::UserRole::SuperAdmin && Some(id) != auth.org_id {
+        return Err(AppError::Forbidden);
+    }
 
     let token = crate::utils::jwt::generate_secure_token(32);
     let invite_id = sqlx::query_scalar!(
@@ -96,16 +139,45 @@ async fn invite_member(State(state): State<AppState>, auth: AuthUser, Path(id): 
         id, auth.id, req.email, req.role as _, token
     ).fetch_one(&state.db).await.map_err(AppError::Database)?;
 
+    crate::services::audit_service::audit_log(
+        &state,
+        "org.member.invited",
+        Some(auth.id),
+        Some(id),
+        Some("org_invitation"),
+        Some(invite_id),
+        serde_json::json!({ "email": req.email, "role": req.role }),
+    );
+
     Ok((StatusCode::CREATED, Json(ApiResponse::with_message(serde_json::json!({ "invitation_id": invite_id }), "Invitation sent"))))
 }
 
-async fn remove_member(State(state): State<AppState>, auth: AuthUser, Path((org_id, user_id)): Path<(Uuid, Uuid)>) -> AppResult<Json<ApiResponse<()>>> {
+async fn remove_member(State(state): State<AppState>, RequireOrgAdmin(auth): RequireOrgAdmin, Path((org_id, user_id)): Path<(Uuid, Uuid)>) -> AppResult<Json<ApiResponse<()>>> {
+    if auth.role != crate::models::user::UserRole::SuperAdmin && Some(org_id) != auth.org_id {
+        return Err(AppError::Forbidden);
+    }
+
     sqlx::query!("DELETE FROM org_members WHERE organization_id = $1 AND user_id = $2", org_id, user_id)
         .execute(&state.db).await.map_err(AppError::Database)?;
+
+    crate::services::audit_service::audit_log(
+        &state,
+        "org.member.removed",
+        Some(auth.id),
+        Some(org_id),
+        Some("org_member"),
+        Some(user_id),
+        serde_json::json!({ "removed_user_id": user_id }),
+    );
+
     Ok(Json(ApiResponse::with_message((), "Member removed")))
 }
 
-async fn get_usage(State(state): State<AppState>, auth: AuthUser, Path(id): Path<Uuid>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+async fn get_usage(State(state): State<AppState>, RequireOrgViewer(auth): RequireOrgViewer, Path(id): Path<Uuid>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    if auth.role != crate::models::user::UserRole::SuperAdmin && Some(id) != auth.org_id {
+        return Err(AppError::Forbidden);
+    }
+
     let o = sqlx::query!(
         "SELECT max_contacts, max_campaigns, monthly_msg_quota, msgs_sent_this_month FROM organizations WHERE id = $1",
         id

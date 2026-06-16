@@ -1,7 +1,12 @@
 use axum::{extract::{Path, State}, http::StatusCode, routing::{get, post, put}, Json, Router};
 use uuid::Uuid;
 use validator::Validate;
-use crate::{errors::{AppError, AppResult}, middleware::auth::AuthUser, models::pagination::ApiResponse, AppState};
+use crate::{
+    errors::{AppError, AppResult},
+    middleware::rbac::{RequireOrgAdmin, RequireOrgViewer},
+    models::pagination::ApiResponse,
+    AppState,
+};
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -12,7 +17,7 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn list_accounts(State(state): State<AppState>, auth: AuthUser) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+async fn list_accounts(State(state): State<AppState>, RequireOrgViewer(auth): RequireOrgViewer) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
     let accounts = sqlx::query!(
         r#"SELECT id, display_name, phone_number, status::text, account_type::text, quality_rating, total_msgs_sent, connected_at
@@ -31,7 +36,7 @@ async fn list_accounts(State(state): State<AppState>, auth: AuthUser) -> AppResu
 
 async fn connect_account(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Json(req): Json<crate::models::whatsapp_account::ConnectWaAccountRequest>,
 ) -> AppResult<(StatusCode, Json<ApiResponse<serde_json::Value>>)> {
     req.validate().map_err(|e| AppError::Validation(e.to_string()))?;
@@ -43,14 +48,14 @@ async fn connect_account(
 
     let id = sqlx::query_scalar!(
         r#"INSERT INTO whatsapp_accounts (organization_id, display_name, phone_number, phone_number_id, waba_id, access_token_enc, status)
-           VALUES ($1, $2, $3, $4, $5, $6, 'connected') RETURNING id"#,
+           VALUES ($1, $2, $3, $4, $5, $6, 'connected'::wa_account_status) RETURNING id"#,
         org_id, req.display_name, req.phone_number, req.phone_number_id, req.waba_id, encrypted_token
     ).fetch_one(&state.db).await.map_err(AppError::Database)?;
 
     Ok((StatusCode::CREATED, Json(ApiResponse::with_message(serde_json::json!({ "id": id }), "WhatsApp account connected"))))
 }
 
-async fn get_account(State(state): State<AppState>, auth: AuthUser, Path(id): Path<Uuid>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+async fn get_account(State(state): State<AppState>, RequireOrgViewer(auth): RequireOrgViewer, Path(id): Path<Uuid>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
     let a = sqlx::query!(
         r#"SELECT id, display_name, phone_number, phone_number_id, status::text, quality_rating, business_name, total_msgs_sent, connected_at
@@ -67,14 +72,14 @@ async fn get_account(State(state): State<AppState>, auth: AuthUser, Path(id): Pa
     }))))
 }
 
-async fn disconnect_account(State(state): State<AppState>, auth: AuthUser, Path(id): Path<Uuid>) -> AppResult<Json<ApiResponse<()>>> {
+async fn disconnect_account(State(state): State<AppState>, RequireOrgAdmin(auth): RequireOrgAdmin, Path(id): Path<Uuid>) -> AppResult<Json<ApiResponse<()>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
     sqlx::query!("UPDATE whatsapp_accounts SET deleted_at = NOW(), status = 'disconnected' WHERE id = $1 AND organization_id = $2", id, org_id)
         .execute(&state.db).await.map_err(AppError::Database)?;
     Ok(Json(ApiResponse::with_message((), "Account disconnected")))
 }
 
-async fn update_profile(State(state): State<AppState>, auth: AuthUser, Path(id): Path<Uuid>, Json(req): Json<crate::models::whatsapp_account::UpdateWaProfileRequest>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+async fn update_profile(State(state): State<AppState>, RequireOrgAdmin(auth): RequireOrgAdmin, Path(id): Path<Uuid>, Json(req): Json<crate::models::whatsapp_account::UpdateWaProfileRequest>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
     sqlx::query!(
         "UPDATE whatsapp_accounts SET business_name = COALESCE($1, business_name), business_description = COALESCE($2, business_description) WHERE id = $3 AND organization_id = $4",
@@ -83,6 +88,7 @@ async fn update_profile(State(state): State<AppState>, auth: AuthUser, Path(id):
     Ok(Json(ApiResponse::with_message(serde_json::json!({}), "Profile updated")))
 }
 
-async fn sync_account(State(state): State<AppState>, auth: AuthUser, Path(id): Path<Uuid>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+async fn sync_account(State(state): State<AppState>, RequireOrgAdmin(auth): RequireOrgAdmin, Path(id): Path<Uuid>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    let _org_id = auth.org_id.ok_or(AppError::Forbidden)?;
     Ok(Json(ApiResponse::with_message(serde_json::json!({}), "Account synced with Meta")))
 }

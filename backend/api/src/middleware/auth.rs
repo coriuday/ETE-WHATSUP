@@ -24,6 +24,7 @@ pub struct AuthUser {
     pub email: String,
     pub role: UserRole,
     pub org_id: Option<Uuid>,
+    pub org_role: Option<crate::models::organization::MemberRole>,
     pub token_version: i32,
 }
 
@@ -90,9 +91,9 @@ where
             _ => {}
         }
 
-        // Get primary org (first org membership)
+        // Get primary org (first org membership) and role
         let org_member = sqlx::query!(
-            "SELECT organization_id FROM org_members WHERE user_id = $1 LIMIT 1",
+            r#"SELECT organization_id, role as "role: crate::models::organization::MemberRole" FROM org_members WHERE user_id = $1 LIMIT 1"#,
             user_id
         )
         .fetch_optional(&app_state.db)
@@ -103,7 +104,8 @@ where
             id: user.id,
             email: user.email,
             role: user.role,
-            org_id: org_member.map(|m| m.organization_id),
+            org_id: org_member.as_ref().map(|m| m.organization_id),
+            org_role: org_member.map(|m| m.role),
             token_version: user.token_version,
         })
     }

@@ -6,3 +6,8 @@ pub mod contact_service;
 pub mod storage_service;
 pub mod email_service;
 pub mod n8n_service;
+pub mod import_worker;
+pub mod recipient_resolver;
+pub mod worker;
+pub mod scheduler;
+pub mod audit_service;

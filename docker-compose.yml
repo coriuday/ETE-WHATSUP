@@ -1,4 +1,4 @@
-version: "3.9"
+
 
 # ─────────────────────────────────────────────
 #  Enterprise WhatsApp Bulk Messaging Platform
@@ -18,6 +18,7 @@ volumes:
   redis_data:
   n8n_data:
   minio_data:
+  postgres_data:
 
 services:
   # ─── Rust + Axum Backend API ───────────────
@@ -32,10 +33,12 @@ services:
     environment:
       - RUST_LOG=info
       - APP_ENV=development
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/whatsup
     env_file:
       - ./backend/api/.env
     depends_on:
       - redis
+      - postgres
     networks:
       - whatsup_net
     volumes:
@@ -74,8 +77,6 @@ services:
     image: redis:7-alpine
     container_name: whatsup_redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
     command: redis-server /usr/local/etc/redis/redis.conf
     volumes:
       - redis_data:/data
@@ -138,6 +139,27 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # ─── PostgreSQL Database ───────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: whatsup_postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=whatsup
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - whatsup_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d whatsup"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ─── Nginx Reverse Proxy ───────────────────
   nginx:

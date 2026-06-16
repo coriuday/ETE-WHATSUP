@@ -263,33 +263,68 @@ impl<'a> ContactService<'a> {
             let filename = field.file_name().unwrap_or("import.csv").to_string();
             let data = field.bytes().await.map_err(|e| AppError::BadRequest(e.to_string()))?;
 
+            // Detect file type
+            let file_type = if filename.to_lowercase().ends_with(".xlsx")
+                || filename.to_lowercase().ends_with(".xls")
+            {
+                "xlsx"
+            } else {
+                "csv"
+            };
+
             // Store in S3
             let storage = crate::services::storage_service::StorageService::new(self.state);
+            let s3_key = format!("imports/{}/{}", org_id, filename);
+            let content_type = if file_type == "xlsx" {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            } else {
+                "text/csv"
+            };
             let file_url = storage
-                .upload_bytes(&format!("imports/{}/{}", org_id, filename), &data, "text/csv")
+                .upload_bytes(&s3_key, &data, content_type)
                 .await
                 .map_err(|e| AppError::Storage(e.to_string()))?;
 
-            // Create import job
+            // Create import job record
             let job_id = sqlx::query_scalar!(
                 r#"
-                INSERT INTO contact_imports (organization_id, file_name, file_url, status, created_by)
-                VALUES ($1, $2, $3, 'pending', $4)
+                INSERT INTO contact_imports
+                    (organization_id, file_name, file_url, file_type, status, created_by)
+                VALUES ($1, $2, $3, $4, 'pending', $5)
                 RETURNING id
                 "#,
-                org_id, filename, file_url, user_id
+                org_id,
+                filename,
+                file_url,
+                file_type,
+                user_id
             )
             .fetch_one(&self.state.db)
             .await
             .map_err(AppError::Database)?;
 
-            // TODO: Spawn background task to process CSV
-            // For now, return job ID immediately
+            // Spawn background worker — returns immediately
+            let state_clone = self.state.clone();
+            let filename_clone = filename.clone();
+            let file_url_clone = file_url.clone();
+            tokio::spawn(async move {
+                crate::services::import_worker::process_import(
+                    state_clone,
+                    job_id,
+                    org_id,
+                    user_id,
+                    file_url_clone,
+                    filename_clone,
+                )
+                .await;
+            });
+
             return Ok(serde_json::json!({
                 "job_id": job_id,
                 "status": "pending",
                 "file_name": filename,
-                "message": "Import job created. Processing will begin shortly."
+                "file_type": file_type,
+                "message": "Import job queued. Processing will begin immediately."
             }));
         }
 

@@ -65,11 +65,11 @@ impl<'a> N8nService<'a> {
 
     /// Fire an event to all matching n8n automation triggers for the org
     pub async fn fire_event(&self, org_id: Uuid, event: N8nEvent) {
-        let event_type = event.event_type();
+        let event_type = event.event_type().to_string();
 
         // Fetch all active triggers for this org and event type
         let triggers = sqlx::query!(
-            "SELECT n8n_webhook_url FROM automation_triggers WHERE organization_id = $1 AND event_type = $2 AND is_active = TRUE",
+            "SELECT id, n8n_webhook_url FROM automation_triggers WHERE organization_id = $1 AND event_type = $2 AND is_active = TRUE",
             org_id, event_type
         )
         .fetch_all(&self.state.db)
@@ -90,20 +90,67 @@ impl<'a> N8nService<'a> {
             let client = self.client.clone();
             let url = trigger.n8n_webhook_url.clone();
             let body = payload.clone();
+            let db = self.state.db.clone();
+            let trigger_id = trigger.id;
+            let event_type_clone = event_type.clone();
 
-            // Fire-and-forget in background task
             tokio::spawn(async move {
-                if let Err(e) = client.post(&url).json(&body).send().await {
-                    tracing::error!("Failed to trigger n8n webhook {}: {}", url, e);
-                } else {
-                    tracing::debug!("Triggered n8n webhook: {}", url);
+                let now = chrono::Utc::now();
+
+                match client.post(&url).json(&body).send().await {
+                    Ok(resp) => {
+                        let status = resp.status().as_u16() as i32;
+                        let resp_body = resp.text().await.unwrap_or_default();
+
+                        tracing::debug!(
+                            "n8n webhook {} → HTTP {} body={}",
+                            url, status, resp_body.get(..200).unwrap_or(&resp_body)
+                        );
+
+                        let _ = sqlx::query!(
+                            r#"
+                            INSERT INTO webhook_delivery_logs
+                                (org_id, trigger_id, event_type, payload, response_status,
+                                 response_body, delivered_at)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7)
+                            "#,
+                            org_id,
+                            trigger_id,
+                            event_type_clone,
+                            body,
+                            status,
+                            resp_body,
+                            now
+                        )
+                        .execute(&db)
+                        .await;
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to fire n8n webhook {}: {}", url, e);
+
+                        let _ = sqlx::query!(
+                            r#"
+                            INSERT INTO webhook_delivery_logs
+                                (org_id, trigger_id, event_type, payload, error, created_at)
+                            VALUES ($1, $2, $3, $4, $5, $6)
+                            "#,
+                            org_id,
+                            trigger_id,
+                            event_type_clone,
+                            body,
+                            e.to_string(),
+                            now
+                        )
+                        .execute(&db)
+                        .await;
+                    }
                 }
             });
 
             // Update trigger stats
             let _ = sqlx::query!(
-                "UPDATE automation_triggers SET last_triggered_at = NOW(), trigger_count = trigger_count + 1 WHERE n8n_webhook_url = $1",
-                trigger.n8n_webhook_url
+                "UPDATE automation_triggers SET last_triggered_at = NOW(), trigger_count = trigger_count + 1 WHERE id = $1",
+                trigger_id
             )
             .execute(&self.state.db)
             .await;

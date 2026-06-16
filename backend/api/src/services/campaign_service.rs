@@ -227,20 +227,130 @@ impl<'a> CampaignService<'a> {
         id: Uuid,
         user_id: Uuid,
     ) -> AppResult<serde_json::Value> {
-        // Transition to running
-        sqlx::query!(
+        // Verify campaign belongs to org and is in a launchable state
+        let campaign = sqlx::query!(
             r#"
-            UPDATE campaigns
-            SET status = 'running', started_at = NOW()
-            WHERE id = $1 AND organization_id = $2 AND status IN ('draft', 'scheduled', 'paused')
+            SELECT id, wa_account_id, type::text, template_id, message_body,
+                   target_type::text, target_group_id, target_segment_id, target_contact_ids
+            FROM campaigns
+            WHERE id = $1 AND organization_id = $2
+              AND status IN ('draft', 'scheduled', 'paused')
+              AND deleted_at IS NULL
             "#,
             id, org_id
+        )
+        .fetch_optional(&self.state.db)
+        .await
+        .map_err(AppError::Database)?
+        .ok_or(AppError::InvalidCampaignState)?;
+
+        // Transition to running
+        sqlx::query!(
+            "UPDATE campaigns SET status = 'running', started_at = NOW() WHERE id = $1",
+            id
         )
         .execute(&self.state.db)
         .await
         .map_err(AppError::Database)?;
 
-        // Trigger n8n event
+        // Resolve recipients
+        let recipients =
+            crate::services::recipient_resolver::resolve_recipients(self.state, org_id, id)
+                .await?;
+
+        let total = recipients.len() as i32;
+
+        // Update total_recipients
+        sqlx::query!(
+            "UPDATE campaigns SET total_recipients = $1 WHERE id = $2",
+            total,
+            id
+        )
+        .execute(&self.state.db)
+        .await
+        .map_err(AppError::Database)?;
+
+        if total == 0 {
+            // No recipients — complete immediately
+            sqlx::query!(
+                "UPDATE campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1",
+                id
+            )
+            .execute(&self.state.db)
+            .await
+            .map_err(AppError::Database)?;
+
+            return self.get_campaign(org_id, id).await;
+        }
+
+        // Build per-job payload from campaign config
+        let message_body = campaign.message_body.clone().unwrap_or_default();
+        let template_id = campaign.template_id;
+
+        // Lookup template name if template campaign
+        let (template_name, language) = if let Some(tmpl_id) = template_id {
+            let t = sqlx::query!(
+                "SELECT name, language::text FROM templates WHERE id = $1 AND organization_id = $2",
+                tmpl_id, org_id
+            )
+            .fetch_optional(&self.state.db)
+            .await
+            .map_err(AppError::Database)?;
+            if let Some(t) = t {
+                (Some(t.name), t.language)
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+        // Bulk-insert message_queue_jobs (chunked to avoid huge queries)
+        const CHUNK: usize = 500;
+        for chunk in recipients.chunks(CHUNK) {
+            for r in chunk {
+                let payload = serde_json::json!({
+                    "org_id": org_id,
+                    "message_body": message_body,
+                    "template_name": template_name,
+                    "language": language.as_deref().unwrap_or("en_US"),
+                    "components": [],
+                });
+
+                let _ = sqlx::query!(
+                    r#"
+                    INSERT INTO message_queue_jobs
+                        (campaign_id, contact_id, payload, status)
+                    VALUES ($1, $2, $3, 'pending')
+                    "#,
+                    id,
+                    r.contact_id,
+                    payload
+                )
+                .execute(&self.state.db)
+                .await
+                .map_err(AppError::Database)?;
+            }
+        }
+
+        // Spawn worker pool
+        let state_clone = self.state.clone();
+        tokio::spawn(async move {
+            crate::services::worker::start_campaign_worker(state_clone, id).await;
+        });
+
+        // Audit log
+        crate::services::audit_service::audit_log(
+            self.state,
+            "campaign.launched",
+            Some(user_id),
+            Some(org_id),
+            Some("campaign"),
+            Some(id),
+            serde_json::json!({ "total_recipients": total }),
+        );
+
+        // Fire n8n event
         let n8n = crate::services::n8n_service::N8nService::new(self.state);
         n8n.fire_event(org_id, crate::services::n8n_service::N8nEvent::CampaignLaunched {
             campaign_id: id, org_id,
@@ -248,6 +358,7 @@ impl<'a> CampaignService<'a> {
 
         self.get_campaign(org_id, id).await
     }
+
 
     pub async fn schedule_campaign(
         &self,

@@ -1,0 +1,79 @@
+$ErrorActionPreference = "Stop"
+$API_URL = "http://127.0.0.1:8081/api/v1"
+
+Write-Host "Registering user..."
+try {
+    $reg = Invoke-RestMethod -Method Post -Uri "$API_URL/auth/register" -ContentType "application/json" -Body '{"email": "admin@whatsup.local", "password": "Password123!", "first_name": "Admin", "last_name": "User"}'
+} catch {
+    Write-Host "User might already exist, continuing..."
+}
+
+Write-Host "Logging in..."
+$login = Invoke-RestMethod -Method Post -Uri "$API_URL/auth/login" -ContentType "application/json" -Body '{"email": "admin@whatsup.local", "password": "Password123!"}'
+$token = $login.data.tokens.access_token
+$headers = @{ "Authorization" = "Bearer $token"; "Content-Type" = "application/json" }
+
+try {
+    Write-Host "Creating Organization..."
+    $org = Invoke-RestMethod -Method Post -Uri "$API_URL/organizations" -Headers $headers -Body '{"name": "Test Org", "website": "https://example.com"}'
+    $orgId = $org.data.id
+    Write-Host "Org ID: $orgId"
+
+    Write-Host "Re-logging in to get updated token with org_id..."
+    $login2 = Invoke-RestMethod -Method Post -Uri "$API_URL/auth/login" -ContentType "application/json" -Body '{"email": "admin@whatsup.local", "password": "Password123!"}'
+    $token2 = $login2.data.tokens.access_token
+    $headers = @{ "Authorization" = "Bearer $token2"; "Content-Type" = "application/json" }
+
+    Write-Host "Creating WA Account..."
+    $wa = Invoke-RestMethod -Method Post -Uri "$API_URL/whatsapp/accounts" -Headers $headers -Body '{"display_name": "Main WA", "phone_number": "1234567890", "phone_number_id": "12345", "waba_id": "67890", "access_token": "fake-token"}'
+    $waId = $wa.data.id
+    Write-Host "WA Account ID: $waId"
+
+    Write-Host "Creating Template..."
+    $tplBody = @"
+    {
+        "wa_account_id": "$waId",
+        "name": "hello_world",
+        "display_name": "Hello World",
+        "category": "marketing",
+        "language": "en_US",
+        "body_text": "Hello {{1}}! Welcome."
+    }
+"@
+    $tpl = Invoke-RestMethod -Method Post -Uri "$API_URL/templates" -Headers $headers -Body $tplBody
+    $tplId = $tpl.data.id
+    Write-Host "Template ID: $tplId"
+
+    Write-Host "Creating Contacts..."
+    Invoke-RestMethod -Method Post -Uri "$API_URL/contacts" -Headers $headers -Body '{"phone_number": "1234567890", "first_name": "John", "last_name": "Doe", "labels": ["test_camp"]}'
+    Invoke-RestMethod -Method Post -Uri "$API_URL/contacts" -Headers $headers -Body '{"phone_number": "0987654321", "first_name": "Jane", "labels": ["test_camp"]}'
+
+    Write-Host "Creating Campaign..."
+    $campBody = @"
+    {
+        "wa_account_id": "$waId",
+        "name": "Test Campaign",
+        "template_id": "$tplId",
+        "type": "bulk_message",
+        "target_type": "all_contacts"
+    }
+"@
+    $camp = Invoke-RestMethod -Method Post -Uri "$API_URL/campaigns" -Headers $headers -Body $campBody
+    $campId = $camp.data.id
+    Write-Host "Campaign ID: $campId"
+
+    Write-Host "Launching Campaign..."
+    Invoke-RestMethod -Method Post -Uri "$API_URL/campaigns/$campId/launch" -Headers $headers -Body '{}'
+} catch {
+    Write-Host "Error: $($_.Exception.Message)"
+    if ($_.ErrorDetails) {
+        Write-Host "Details: $($_.ErrorDetails.Message)"
+    } else {
+        $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+        $reader.BaseStream.Position = 0
+        Write-Host "Response: $($reader.ReadToEnd())"
+    }
+    exit 1
+}
+
+Write-Host "Flow complete! Verification queries can now be run."

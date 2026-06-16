@@ -33,6 +33,23 @@ pub enum MemberRole {
     Viewer,
 }
 
+impl MemberRole {
+    /// Numeric rank: higher = more permissions.
+    pub fn rank(&self) -> u8 {
+        match self {
+            MemberRole::Viewer => 1,
+            MemberRole::Member => 2,
+            MemberRole::Admin  => 3,
+            MemberRole::Owner  => 4,
+        }
+    }
+
+    /// Returns true when this role meets or exceeds `required`.
+    pub fn has_permission(&self, required: &MemberRole) -> bool {
+        self.rank() >= required.rank()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct Organization {
     pub id: Uuid,

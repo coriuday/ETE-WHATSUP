@@ -117,11 +117,13 @@ impl<'a> AuthService<'a> {
     }
 
     pub async fn login(&self, req: LoginRequest) -> AppResult<LoginResponse> {
-        let user = sqlx::query!(
+        let user = sqlx::query_as!(
+            crate::models::user::User,
             r#"
-            SELECT id, email, password_hash, first_name, last_name,
-                   role::text, status::text, email_verified, two_factor_enabled,
-                   two_factor_secret, token_version
+            SELECT id, email, password_hash, first_name, last_name, avatar_url,
+                   role as "role: _", status as "status: _", email_verified,
+                   two_factor_enabled, two_factor_secret, token_version,
+                   last_login_at, created_at, updated_at, deleted_at
             FROM users
             WHERE email = $1 AND deleted_at IS NULL
             "#,
@@ -140,9 +142,9 @@ impl<'a> AuthService<'a> {
         }
 
         // Check status
-        match user.status.as_deref() {
-            Some("suspended") => return Err(AppError::AccountSuspended),
-            Some("pending_verification") => return Err(AppError::AccountNotVerified),
+        match user.status {
+            crate::models::user::UserStatus::Suspended => return Err(AppError::AccountSuspended),
+            crate::models::user::UserStatus::PendingVerification => return Err(AppError::AccountNotVerified),
             _ => {}
         }
 
@@ -165,7 +167,7 @@ impl<'a> AuthService<'a> {
             } else {
                 // No code provided — request it
                 return Ok(LoginResponse {
-                    user: self.build_user_response_raw(&user),
+                    user: user.clone().into(),
                     tokens: AuthTokens {
                         access_token: String::new(),
                         refresh_token: String::new(),
@@ -178,10 +180,16 @@ impl<'a> AuthService<'a> {
         }
 
         // Generate tokens
+        let role_str = match user.role {
+            crate::models::user::UserRole::SuperAdmin => "super_admin",
+            crate::models::user::UserRole::BusinessAdmin => "business_admin",
+            crate::models::user::UserRole::TeamMember => "team_member",
+        };
+
         let access_token = generate_access_token(
             user.id,
             &user.email,
-            user.role.as_deref().unwrap_or("team_member"),
+            role_str,
             user.token_version,
             &self.state.config.jwt_secret,
             self.state.config.jwt_access_expires_secs,
@@ -191,18 +199,19 @@ impl<'a> AuthService<'a> {
         let refresh_token = generate_refresh_token(
             user.id,
             &user.email,
-            user.role.as_deref().unwrap_or("team_member"),
+            role_str,
             user.token_version,
             &self.state.config.jwt_refresh_secret,
             self.state.config.jwt_refresh_expires_secs,
         )
         .map_err(|e| AppError::Internal(e))?;
 
-        // Store session
+        // Store session (hashed refresh token)
+        let token_hash = crate::utils::encryption::sha256_hex(&refresh_token);
         sqlx::query!(
-            "INSERT INTO user_sessions (user_id, refresh_token, expires_at) VALUES ($1, $2, $3)",
+            "INSERT INTO user_sessions (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
             user.id,
-            refresh_token,
+            token_hash,
             Utc::now() + Duration::seconds(self.state.config.jwt_refresh_expires_secs as i64)
         )
         .execute(&self.state.db)
@@ -219,7 +228,7 @@ impl<'a> AuthService<'a> {
         .map_err(AppError::Database)?;
 
         Ok(LoginResponse {
-            user: self.build_user_response_raw(&user),
+            user: user.into(),
             tokens: AuthTokens {
                 access_token,
                 refresh_token,
@@ -234,10 +243,12 @@ impl<'a> AuthService<'a> {
         let claims = verify_refresh_token(refresh_token, &self.state.config.jwt_refresh_secret)
             .map_err(|_| AppError::InvalidToken)?;
 
+        let token_hash = crate::utils::encryption::sha256_hex(refresh_token);
+
         // Verify session exists and not revoked
         let session = sqlx::query!(
-            "SELECT id FROM user_sessions WHERE refresh_token = $1 AND revoked = FALSE AND expires_at > NOW()",
-            refresh_token
+            "SELECT id FROM user_sessions WHERE token_hash = $1 AND revoked = FALSE AND expires_at > NOW()",
+            token_hash
         )
         .fetch_optional(&self.state.db)
         .await
@@ -264,8 +275,8 @@ impl<'a> AuthService<'a> {
 
         // Rotate: revoke old refresh token
         sqlx::query!(
-            "UPDATE user_sessions SET revoked = TRUE WHERE refresh_token = $1",
-            refresh_token
+            "UPDATE user_sessions SET revoked = TRUE WHERE token_hash = $1",
+            token_hash
         )
         .execute(&self.state.db)
         .await
@@ -283,10 +294,12 @@ impl<'a> AuthService<'a> {
             &self.state.config.jwt_refresh_secret, self.state.config.jwt_refresh_expires_secs,
         ).map_err(|e| AppError::Internal(e))?;
 
+        let new_token_hash = crate::utils::encryption::sha256_hex(&new_refresh);
+
         sqlx::query!(
-            "INSERT INTO user_sessions (user_id, refresh_token, expires_at) VALUES ($1, $2, $3)",
+            "INSERT INTO user_sessions (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
             user_id,
-            new_refresh,
+            new_token_hash,
             Utc::now() + Duration::seconds(self.state.config.jwt_refresh_expires_secs as i64)
         )
         .execute(&self.state.db)
@@ -302,10 +315,11 @@ impl<'a> AuthService<'a> {
     }
 
     pub async fn logout(&self, user_id: Uuid, refresh_token: &str) -> AppResult<()> {
+        let token_hash = crate::utils::encryption::sha256_hex(refresh_token);
         sqlx::query!(
-            "UPDATE user_sessions SET revoked = TRUE WHERE user_id = $1 AND refresh_token = $2",
+            "UPDATE user_sessions SET revoked = TRUE WHERE user_id = $1 AND token_hash = $2",
             user_id,
-            refresh_token
+            token_hash
         )
         .execute(&self.state.db)
         .await
@@ -533,30 +547,4 @@ impl<'a> AuthService<'a> {
         Ok(())
     }
 
-    // ── Private helpers ───────────────────────────────────────
-
-    fn build_user_response_raw(&self, user: &impl UserRow) -> UserResponse {
-        UserResponse {
-            id: user.id(),
-            email: user.email(),
-            first_name: user.first_name(),
-            last_name: user.last_name(),
-            full_name: format!("{} {}", user.first_name(), user.last_name()),
-            avatar_url: None,
-            role: crate::models::user::UserRole::TeamMember,
-            status: crate::models::user::UserStatus::Active,
-            email_verified: true,
-            two_factor_enabled: false,
-            last_login_at: None,
-            created_at: Utc::now(),
-        }
-    }
-}
-
-// Trait to abstract over different query result shapes
-trait UserRow {
-    fn id(&self) -> Uuid;
-    fn email(&self) -> String;
-    fn first_name(&self) -> String;
-    fn last_name(&self) -> String;
 }

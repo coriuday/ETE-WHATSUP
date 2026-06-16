@@ -67,3 +67,44 @@ macro_rules! impl_role_guard {
 impl_role_guard!(RequireTeamMember, UserRole::TeamMember);
 impl_role_guard!(RequireBusinessAdmin, UserRole::BusinessAdmin);
 impl_role_guard!(RequireSuperAdmin, UserRole::SuperAdmin);
+
+/// Org-level role guards as extractors
+pub struct RequireOrgViewer(pub AuthUser);
+pub struct RequireOrgMember(pub AuthUser);
+pub struct RequireOrgAdmin(pub AuthUser);
+pub struct RequireOrgOwner(pub AuthUser);
+
+macro_rules! impl_org_role_guard {
+    ($guard:ty, $required_role:expr) => {
+        #[async_trait]
+        impl<S> FromRequestParts<S> for $guard
+        where
+            S: Send + Sync,
+            axum::extract::State<crate::AppState>: FromRequestParts<S>,
+        {
+            type Rejection = AppError;
+
+            async fn from_request_parts(
+                parts: &mut Parts,
+                state: &S,
+            ) -> Result<Self, Self::Rejection> {
+                let user = AuthUser::from_request_parts(parts, state).await?;
+                // SuperAdmin has full bypass
+                if user.role == UserRole::SuperAdmin {
+                    return Ok(Self(user));
+                }
+                if let Some(ref org_role) = user.org_role {
+                    if org_role.has_permission(&$required_role) {
+                        return Ok(Self(user));
+                    }
+                }
+                Err(AppError::Forbidden)
+            }
+        }
+    };
+}
+
+impl_org_role_guard!(RequireOrgViewer, crate::models::organization::MemberRole::Viewer);
+impl_org_role_guard!(RequireOrgMember, crate::models::organization::MemberRole::Member);
+impl_org_role_guard!(RequireOrgAdmin, crate::models::organization::MemberRole::Admin);
+impl_org_role_guard!(RequireOrgOwner, crate::models::organization::MemberRole::Owner);

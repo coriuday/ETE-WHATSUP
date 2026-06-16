@@ -31,7 +31,7 @@ sqlx = { version = "0.7", features = [
 ] }
 
 # ── Redis ─────────────────────────────────────────────────────
-redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
 deadpool-redis = "0.14"
 
 # ── Serialization ─────────────────────────────────────────────
@@ -41,11 +41,12 @@ serde_json = "1"
 # ── Authentication & Security ─────────────────────────────────
 jsonwebtoken = "9"
 bcrypt = "0.15"
-totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
+totp-rs = { version = "5", features = ["gen_secret", "otpauth", "qr"] }
 aes-gcm = "0.10"
 base64 = "0.22"
 rand = "0.8"
 sha2 = "0.10"
+hmac = "0.12"
 hex = "0.4"
 
 # ── IDs & Time ────────────────────────────────────────────────
@@ -58,7 +59,6 @@ reqwest = { version = "0.11", features = ["json", "multipart", "stream"] }
 # ── File handling ─────────────────────────────────────────────
 csv = "1"
 calamine = "0.24"      # Excel parsing
-tokio-multipart = "0.2"
 mime = "0.3"
 
 # ── S3 / Object Storage ───────────────────────────────────────
@@ -90,6 +90,11 @@ serde_qs = "0.12"
 
 # ── Rate limiting ────────────────────────────────────────────
 governor = { version = "0.6", features = ["dashmap"] }
+
+# ── Other utilities ───────────────────────────────────────────
+slug = "0.1.5"
+rust_decimal = { version = "1.34", features = ["serde-float"] }
+bytes = "1"
 
 [dev-dependencies]
 axum-test = "14"

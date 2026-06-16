@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::{
     errors::{AppError, AppResult},
-    middleware::auth::AuthUser,
+    middleware::rbac::{RequireOrgAdmin, RequireOrgViewer},
     models::pagination::ApiResponse,
     AppState,
 };
@@ -23,12 +23,12 @@ pub fn router(state: AppState) -> Router {
 
 async fn list_templates(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgViewer(auth): RequireOrgViewer,
     Query(query): Query<crate::models::template::TemplateListQuery>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
     let templates = sqlx::query!(
-        r#"SELECT id, name, display_name, category::text, language, status::text, variable_count, usage_count, created_at
+        r#"SELECT id, name, display_name, category::text, language::text, status::text, variable_count, usage_count, created_at
            FROM templates WHERE organization_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC"#,
         org_id
     )
@@ -48,7 +48,7 @@ async fn list_templates(
 
 async fn create_template(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Json(req): Json<crate::models::template::CreateTemplateRequest>,
 ) -> AppResult<(StatusCode, Json<ApiResponse<serde_json::Value>>)> {
     use validator::Validate;
@@ -60,7 +60,7 @@ async fn create_template(
 
     let id = sqlx::query_scalar!(
         r#"INSERT INTO templates (organization_id, wa_account_id, name, display_name, category, language, body_text, header, footer_text, buttons, variable_count, created_by)
-           VALUES ($1, $2, $3, $4, $5::template_category, $6, $7, $8, $9, $10, $11, $12)
+           VALUES ($1, $2, $3, $4, CAST($5::text AS template_category), CAST($6::text AS template_language), $7, $8, $9, $10, $11, $12)
            RETURNING id"#,
         org_id, req.wa_account_id, req.name, req.display_name, req.category as _,
         req.language, req.body_text, req.header, req.footer_text, req.buttons, var_count, auth.id
@@ -69,17 +69,27 @@ async fn create_template(
     .await
     .map_err(AppError::Database)?;
 
+    crate::services::audit_service::audit_log(
+        &state,
+        "template.created",
+        Some(auth.id),
+        Some(org_id),
+        Some("template"),
+        Some(id),
+        serde_json::json!({ "name": req.name, "language": req.language }),
+    );
+
     Ok((StatusCode::CREATED, Json(ApiResponse::ok(serde_json::json!({ "id": id })))))
 }
 
 async fn get_template(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgViewer(auth): RequireOrgViewer,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
     let t = sqlx::query!(
-        r#"SELECT id, name, display_name, category::text, language, status::text, header, body_text, footer_text, buttons, variable_count, variable_definitions, created_at
+        r#"SELECT id, name, display_name, category::text, language::text, status::text, header, body_text, footer_text, buttons, variable_count, variable_definitions, created_at
            FROM templates WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL"#,
         id, org_id
     )
@@ -99,16 +109,28 @@ async fn get_template(
 
 async fn update_template(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
     Json(req): Json<serde_json::Value>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
+
+    crate::services::audit_service::audit_log(
+        &state,
+        "template.updated",
+        Some(auth.id),
+        Some(org_id),
+        Some("template"),
+        Some(id),
+        serde_json::json!({}),
+    );
+
     Ok(Json(ApiResponse::with_message(serde_json::json!({"id": id}), "Template updated")))
 }
 
 async fn delete_template(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<()>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -116,12 +138,23 @@ async fn delete_template(
         .execute(&state.db)
         .await
         .map_err(AppError::Database)?;
+
+    crate::services::audit_service::audit_log(
+        &state,
+        "template.deleted",
+        Some(auth.id),
+        Some(org_id),
+        Some("template"),
+        Some(id),
+        serde_json::json!({}),
+    );
+
     Ok(Json(ApiResponse::with_message((), "Template deleted")))
 }
 
 async fn submit_for_approval(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -132,5 +165,16 @@ async fn submit_for_approval(
     .execute(&state.db)
     .await
     .map_err(AppError::Database)?;
+
+    crate::services::audit_service::audit_log(
+        &state,
+        "template.submitted",
+        Some(auth.id),
+        Some(org_id),
+        Some("template"),
+        Some(id),
+        serde_json::json!({}),
+    );
+
     Ok(Json(ApiResponse::with_message(serde_json::json!({"id": id}), "Template submitted for Meta approval")))
 }

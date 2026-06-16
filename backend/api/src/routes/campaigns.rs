@@ -9,7 +9,7 @@ use validator::Validate;
 
 use crate::{
     errors::{AppError, AppResult},
-    middleware::auth::AuthUser,
+    middleware::rbac::{RequireOrgAdmin, RequireOrgViewer},
     models::{
         campaign::{
             CampaignListQuery, CreateCampaignRequest, ScheduleCampaignRequest,
@@ -38,7 +38,7 @@ pub fn router(state: AppState) -> Router {
 
 async fn list_campaigns(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgViewer(auth): RequireOrgViewer,
     Query(query): Query<CampaignListQuery>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -49,7 +49,7 @@ async fn list_campaigns(
 
 async fn create_campaign(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Json(req): Json<CreateCampaignRequest>,
 ) -> AppResult<(StatusCode, Json<ApiResponse<serde_json::Value>>)> {
     req.validate().map_err(|e| AppError::Validation(e.to_string()))?;
@@ -61,7 +61,7 @@ async fn create_campaign(
 
 async fn get_campaign(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgViewer(auth): RequireOrgViewer,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -72,7 +72,7 @@ async fn get_campaign(
 
 async fn update_campaign(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateCampaignRequest>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
@@ -84,7 +84,7 @@ async fn update_campaign(
 
 async fn delete_campaign(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<()>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -95,7 +95,7 @@ async fn delete_campaign(
 
 async fn launch_campaign(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -106,7 +106,7 @@ async fn launch_campaign(
 
 async fn schedule_campaign(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
     Json(req): Json<ScheduleCampaignRequest>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
@@ -118,7 +118,7 @@ async fn schedule_campaign(
 
 async fn pause_campaign(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -129,7 +129,7 @@ async fn pause_campaign(
 
 async fn resume_campaign(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -140,7 +140,7 @@ async fn resume_campaign(
 
 async fn cancel_campaign(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<()>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -151,7 +151,7 @@ async fn cancel_campaign(
 
 async fn clone_campaign(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
     Path(id): Path<Uuid>,
 ) -> AppResult<(StatusCode, Json<ApiResponse<serde_json::Value>>)> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -162,7 +162,7 @@ async fn clone_campaign(
 
 async fn get_campaign_stats(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgViewer(auth): RequireOrgViewer,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
@@ -173,7 +173,7 @@ async fn get_campaign_stats(
 
 async fn get_campaign_messages(
     State(state): State<AppState>,
-    auth: AuthUser,
+    RequireOrgViewer(auth): RequireOrgViewer,
     Path(id): Path<Uuid>,
     Query(query): Query<serde_json::Value>,
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {

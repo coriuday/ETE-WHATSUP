@@ -13,6 +13,16 @@ pub enum TemplateCategory {
     Authentication,
 }
 
+impl std::fmt::Display for TemplateCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TemplateCategory::Marketing => write!(f, "marketing"),
+            TemplateCategory::Utility => write!(f, "utility"),
+            TemplateCategory::Authentication => write!(f, "authentication"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
 #[sqlx(type_name = "template_status", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]

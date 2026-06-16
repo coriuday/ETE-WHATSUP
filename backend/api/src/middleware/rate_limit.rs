@@ -8,17 +8,42 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use redis::AsyncCommands;
+use deadpool_redis::redis::AsyncCommands;
 use serde_json::json;
 
-use crate::cache::RedisPool;
+use crate::AppState;
 
-/// Simple Redis-backed sliding window rate limiter
-/// Key: rate_limit:{ip}  Value: request count  TTL: 60 seconds
-pub async fn rate_limit_middleware(
-    State(redis_pool): State<Arc<RedisPool>>,
+pub async fn auth_rate_limit(
+    State(state): State<AppState>,
     request: Request<Body>,
     next: Next,
+) -> Response {
+    rate_limit_helper(state, request, next, "rate_limit:auth:", 5, 60).await
+}
+
+pub async fn api_rate_limit(
+    State(state): State<AppState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    rate_limit_helper(state, request, next, "rate_limit:api:", 300, 60).await
+}
+
+pub async fn webhook_rate_limit(
+    State(state): State<AppState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    rate_limit_helper(state, request, next, "rate_limit:webhook:", 1000, 60).await
+}
+
+async fn rate_limit_helper(
+    state: AppState,
+    request: Request<Body>,
+    next: Next,
+    prefix: &str,
+    limit: u64,
+    window_secs: i64,
 ) -> Response {
     let ip = request
         .headers()
@@ -29,10 +54,10 @@ pub async fn rate_limit_middleware(
         .trim()
         .to_string();
 
-    let key = format!("rate_limit:{}", ip);
+    let key = format!("{}{}", prefix, ip);
 
-    let result: Result<Option<u64>, _> = async {
-        let mut conn = redis_pool
+    let result: Result<Option<u64>, String> = async {
+        let mut conn = state.redis
             .get()
             .await
             .map_err(|e| e.to_string())?;
@@ -40,8 +65,7 @@ pub async fn rate_limit_middleware(
         let count: u64 = conn.incr(&key, 1u64).await.map_err(|e| e.to_string())?;
 
         if count == 1 {
-            // First request in window — set 60 second expiry
-            let _: () = conn.expire(&key, 60).await.map_err(|e| e.to_string())?;
+            let _: () = conn.expire(&key, window_secs).await.map_err(|e| e.to_string())?;
         }
 
         Ok(Some(count))
@@ -49,7 +73,7 @@ pub async fn rate_limit_middleware(
     .await;
 
     match result {
-        Ok(Some(count)) if count > 100 => {
+        Ok(Some(count)) if count > limit => {
             let body = Json(json!({
                 "success": false,
                 "error": {
