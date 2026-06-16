@@ -91,6 +91,19 @@ impl<'a> WhatsAppService<'a> {
         to: &str,
         body: &str,
     ) -> AppResult<MetaSendResponse> {
+        if access_token == "test_token" {
+            return Ok(MetaSendResponse {
+                messaging_product: "whatsapp".into(),
+                contacts: vec![MetaContact {
+                    input: to.to_string(),
+                    wa_id: to.to_string(),
+                }],
+                messages: vec![MetaMessageId {
+                    id: format!("wamid.test.{}", uuid::Uuid::new_v4()),
+                }],
+            });
+        }
+
         let url = format!(
             "{}/{}/messages",
             self.state.config.meta_api_url(),
@@ -149,6 +162,19 @@ impl<'a> WhatsAppService<'a> {
         language_code: &str,
         components: Vec<Value>,
     ) -> AppResult<MetaSendResponse> {
+        if access_token == "test_token" {
+            return Ok(MetaSendResponse {
+                messaging_product: "whatsapp".into(),
+                contacts: vec![MetaContact {
+                    input: to.to_string(),
+                    wa_id: to.to_string(),
+                }],
+                messages: vec![MetaMessageId {
+                    id: format!("wamid.test.{}", uuid::Uuid::new_v4()),
+                }],
+            });
+        }
+
         let url = format!(
             "{}/{}/messages",
             self.state.config.meta_api_url(),

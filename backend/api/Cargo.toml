@@ -63,7 +63,7 @@ mime = "0.3"
 
 # ── S3 / Object Storage ───────────────────────────────────────
 aws-config = { version = "1", features = ["behavior-version-latest"] }
-aws-sdk-s3 = "1"
+aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }
 aws-credential-types = "1"
 
 # ── Email ─────────────────────────────────────────────────────
