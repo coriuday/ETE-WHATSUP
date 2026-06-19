@@ -10,16 +10,40 @@ import toast from "react-hot-toast";
 export default function Login() {
   const router = useRouter();
   const { setTokens, setUser, setOrganization } = useAuthStore();
-  
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  
+
   // 2FA state
   const [requires2Fa, setRequires2Fa] = useState(false);
   const [twoFactorToken, setTwoFactorToken] = useState("");
   const [code, setCode] = useState("");
+
+  const handleLoginSuccess = async (accessToken: string, refreshToken: string, user: any) => {
+    setTokens(accessToken, refreshToken);
+    setUser(user);
+
+    // Check if user has an organization
+    try {
+      const { api } = await import("@/lib/api");
+      const orgRes = await api.get("/organizations");
+      const orgs = orgRes.data.data.organizations || [];
+      if (orgs.length > 0) {
+        setOrganization(orgs[0]);
+        toast.success("Welcome back!");
+        router.push("/dashboard");
+      } else {
+        toast.success("Welcome! Let's set up your organization.");
+        router.push("/onboarding");
+      }
+    } catch (e) {
+      // If org fetch fails, still go to dashboard — layout guard will handle it
+      toast.success("Welcome back!");
+      router.push("/dashboard");
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,58 +51,35 @@ export default function Login() {
 
     try {
       const { api } = await import("@/lib/api");
-      
+
       if (requires2Fa) {
-        // Verify 2FA code
         const res = await api.post("/auth/2fa/verify", {
           token: twoFactorToken,
           code,
         });
 
         const { accessToken, refreshToken, user } = res.data.data;
-        setTokens(accessToken, refreshToken);
-        setUser(user);
-        
-        // Fetch organization
-        try {
-          const orgRes = await api.get("/organizations");
-          const orgs = orgRes.data.data.organizations || [];
-          if (orgs.length > 0) setOrganization(orgs[0]);
-        } catch (e) {
-          console.error("Failed loading orgs", e);
-        }
-
-        toast.success("Welcome back!");
-        router.push("/dashboard");
+        await handleLoginSuccess(accessToken, refreshToken, user);
       } else {
-        // Standard email/password login
         const res = await api.post("/auth/login", { email, password });
-        
-        if (res.data.data.requires2fa) {
+
+        if (res.data.data.requires_2fa) {
           setRequires2Fa(true);
           setTwoFactorToken(res.data.data.token);
           toast.success("Please enter your 2FA verification code");
         } else {
-          const { accessToken, refreshToken, user } = res.data.data;
-          setTokens(accessToken, refreshToken);
-          setUser(user);
-
-          // Fetch organization
-          try {
-            const orgRes = await api.get("/organizations");
-            const orgs = orgRes.data.data.organizations || [];
-            if (orgs.length > 0) setOrganization(orgs[0]);
-          } catch (e) {
-            console.error("Failed loading orgs", e);
-          }
-
-          toast.success("Logged in successfully!");
-          router.push("/dashboard");
+          const { access_token, refresh_token, user } = res.data.data.tokens 
+            ? { ...res.data.data.tokens, user: res.data.data.user } 
+            : res.data.data;
+          await handleLoginSuccess(access_token, refresh_token, user);
         }
       }
     } catch (err: any) {
-      const errorMsg = err.response?.data?.error || "Invalid credentials. Please try again.";
-      toast.error(errorMsg);
+      const errorMsg =
+        err.response?.data?.error?.message ||
+        err.response?.data?.error ||
+        "Invalid credentials. Please try again.";
+      toast.error(typeof errorMsg === "string" ? errorMsg : "Login failed.");
     } finally {
       setIsLoading(false);
     }

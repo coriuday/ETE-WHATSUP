@@ -2,7 +2,7 @@
 # Rust Axum Backend API Dockerfile
 # ─────────────────────────────────────────────
 
-FROM rust:1.75-slim-buster AS builder
+FROM rust:slim-bookworm AS builder
 
 WORKDIR /app
 
@@ -28,7 +28,7 @@ COPY src/ ./src/
 RUN cargo build --release
 
 # Runner stage
-FROM debian:buster-slim AS runner
+FROM debian:bookworm-slim AS runner
 
 WORKDIR /app
 

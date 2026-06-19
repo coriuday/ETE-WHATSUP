@@ -7,7 +7,8 @@ import {
   ArrowLeft, 
   AlertTriangle,
   RefreshCw,
-  Tag
+  Tag,
+  AlertCircle
 } from "lucide-react";
 import { 
   ResponsiveContainer, 
@@ -17,53 +18,65 @@ import {
   Legend, 
   Tooltip 
 } from "recharts";
-import toast from "react-hot-toast";
 import { Campaign, Message } from "@/types";
+
+interface CampaignData {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  total_recipient_count: number;
+  sent_count: number;
+  delivered_count: number;
+  read_count: number;
+  failed_count: number;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+interface MessageData {
+  id: string;
+  contact_id: string;
+  wa_message_id: string | null;
+  status: string;
+  failure_reason: string | null;
+  sent_at: string | null;
+  delivered_at: string | null;
+  read_at: string | null;
+}
 
 export default function CampaignDetails() {
   const params = useParams();
   const campaignId = params.id as string;
 
-  const [campaign, setCampaign] = useState<Campaign | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [campaign, setCampaign] = useState<CampaignData | null>(null);
+  const [messages, setMessages] = useState<MessageData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   const fetchCampaignDetails = async () => {
-    setLoading(true);
     try {
       const { api } = await import("@/lib/api");
-      const campRes = await api.get(`/campaigns/${campaignId}`);
-      setCampaign(campRes.data.data.campaign);
-      
-      const msgRes = await api.get(`/messages?campaignId=${campaignId}`);
-      setMessages(msgRes.data.data.messages || []);
-    } catch (e) {
-      console.error("Failed loading campaign details via API, loading mock data", e);
-      // Mocks
-      setCampaign({
-        id: campaignId,
-        organizationId: "1",
-        waAccountId: "acc1",
-        name: "Summer Blast Broadcast",
-        type: "promotional",
-        status: "completed",
-        totalRecipientCount: 1500,
-        sentCount: 1500,
-        deliveredCount: 1420,
-        readCount: 1150,
-        failedCount: 80,
-        createdAt: "2026-06-02T10:00:00Z",
-        updatedAt: "2026-06-02T10:00:00Z",
-        startedAt: "2026-06-02T10:02:00Z",
-        completedAt: "2026-06-02T10:15:00Z"
-      });
-
-      setMessages([
-        { id: "m1", organizationId: "1", waAccountId: "acc1", campaignId, contactId: "c1", waMessageId: "wamid.1", direction: "outbound", type: "template", body: "Hello Rahul, check out our summer discounts!", status: "read", sentAt: "2026-06-02T10:02:05Z", deliveredAt: "2026-06-02T10:02:10Z", readAt: "2026-06-02T10:05:00Z", createdAt: "" },
-        { id: "m2", organizationId: "1", waAccountId: "acc1", campaignId, contactId: "c2", waMessageId: "wamid.2", direction: "outbound", type: "template", body: "Hello Priya, check out our summer discounts!", status: "delivered", sentAt: "2026-06-02T10:02:12Z", deliveredAt: "2026-06-02T10:02:18Z", createdAt: "" },
-        { id: "m3", organizationId: "1", waAccountId: "acc1", campaignId, contactId: "c3", waMessageId: "wamid.3", direction: "outbound", type: "template", body: "Hello Amit, check out our summer discounts!", status: "failed", sentAt: "2026-06-02T10:02:15Z", failedAt: "2026-06-02T10:02:20Z", failureReason: "Undeliverable number / User has blocked notifications", createdAt: "" },
-        { id: "m4", organizationId: "1", waAccountId: "acc1", campaignId, contactId: "c4", waMessageId: "wamid.4", direction: "outbound", type: "template", body: "Hello Sarah, check out our summer discounts!", status: "sent", sentAt: "2026-06-02T10:02:22Z", createdAt: "" }
+      const [campRes, msgRes] = await Promise.allSettled([
+        api.get(`/campaigns/${campaignId}`),
+        api.get(`/campaigns/${campaignId}/messages`)
       ]);
+
+      if (campRes.status === "fulfilled") {
+        setCampaign(campRes.value.data.data);
+      } else {
+        throw new Error(campRes.reason?.response?.data?.error?.message || "Failed to load campaign");
+      }
+      
+      if (msgRes.status === "fulfilled") {
+        setMessages(msgRes.value.data.data.data || []);
+      }
+      
+      setError("");
+    } catch (e: any) {
+      const msg = e.message || "Failed to load campaign details";
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -73,6 +86,17 @@ export default function CampaignDetails() {
     if (campaignId) fetchCampaignDetails();
   }, [campaignId]);
 
+  // Auto-refresh polling if running
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (campaign?.status === "running") {
+      interval = setInterval(fetchCampaignDetails, 3000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [campaign?.status]);
+
   if (loading) {
     return (
       <div className="flex justify-center items-center py-20">
@@ -81,11 +105,12 @@ export default function CampaignDetails() {
     );
   }
 
-  if (!campaign) {
+  if (error || !campaign) {
     return (
-      <div className="glass-panel p-10 rounded-2xl text-center text-muted-foreground border border-white/5">
-        Campaign not found.{" "}
-        <Link href="/campaigns" className="text-primary hover:underline">
+      <div className="glass-panel p-10 rounded-2xl text-center text-muted-foreground border border-white/5 space-y-4">
+        <AlertCircle className="w-8 h-8 text-rose-400 mx-auto" />
+        <p>{error || "Campaign not found"}</p>
+        <Link href="/campaigns" className="text-primary hover:underline block">
           Go back to campaigns list.
         </Link>
       </div>
@@ -93,10 +118,10 @@ export default function CampaignDetails() {
   }
 
   const pieData = [
-    { name: "Delivered (Unread)", value: campaign.deliveredCount - campaign.readCount, color: "#10b981" },
-    { name: "Read", value: campaign.readCount, color: "#38bdf8" },
-    { name: "Sent (Undelivered)", value: campaign.sentCount - campaign.deliveredCount, color: "#6b7280" },
-    { name: "Failed", value: campaign.failedCount, color: "#f43f5e" }
+    { name: "Delivered (Unread)", value: (campaign.delivered_count || 0) - (campaign.read_count || 0), color: "#10b981" },
+    { name: "Read", value: campaign.read_count || 0, color: "#38bdf8" },
+    { name: "Sent (Undelivered)", value: (campaign.sent_count || 0) - (campaign.delivered_count || 0), color: "#6b7280" },
+    { name: "Failed", value: campaign.failed_count || 0, color: "#f43f5e" }
   ].filter(d => d.value > 0);
 
   return (
@@ -117,6 +142,7 @@ export default function CampaignDetails() {
               <span className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded-full uppercase ${
                 campaign.status === "completed" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
                 campaign.status === "running" ? "bg-primary/10 text-primary border border-primary/20 animate-pulse" :
+                campaign.status === "failed" ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" :
                 "bg-yellow-500/10 text-yellow-400 border border-yellow-500/20"
               }`}>
                 {campaign.status}
@@ -139,21 +165,21 @@ export default function CampaignDetails() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
         <div className="glass-panel p-5 rounded-2xl">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Total Targeted</p>
-          <p className="text-2xl font-bold text-white">{campaign.totalRecipientCount.toLocaleString()}</p>
+          <p className="text-2xl font-bold text-white">{(campaign.total_recipient_count || 0).toLocaleString()}</p>
         </div>
         <div className="glass-panel p-5 rounded-2xl">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Delivered</p>
-          <p className="text-2xl font-bold text-emerald-400">{campaign.deliveredCount.toLocaleString()}</p>
+          <p className="text-2xl font-bold text-emerald-400">{(campaign.delivered_count || 0).toLocaleString()}</p>
         </div>
         <div className="glass-panel p-5 rounded-2xl">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Read Rate</p>
           <p className="text-2xl font-bold text-sky-400">
-            {campaign.sentCount > 0 ? `${Math.round((campaign.readCount / campaign.sentCount) * 100)}%` : "0%"}
+            {(campaign.sent_count || 0) > 0 ? `${Math.round(((campaign.read_count || 0) / (campaign.sent_count || 1)) * 100)}%` : "0%"}
           </p>
         </div>
         <div className="glass-panel p-5 rounded-2xl">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Failed</p>
-          <p className="text-2xl font-bold text-rose-400">{campaign.failedCount.toLocaleString()}</p>
+          <p className="text-2xl font-bold text-rose-400">{(campaign.failed_count || 0).toLocaleString()}</p>
         </div>
       </div>
 
@@ -207,15 +233,15 @@ export default function CampaignDetails() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div className="p-3.5 bg-white/2 border border-white/5 rounded-xl">
                 <span className="text-muted-foreground uppercase font-semibold block mb-1">Created At</span>
-                <span className="font-bold text-white">{new Date(campaign.createdAt).toLocaleString()}</span>
+                <span className="font-bold text-white">{new Date(campaign.created_at).toLocaleString()}</span>
               </div>
               <div className="p-3.5 bg-white/2 border border-white/5 rounded-xl">
                 <span className="text-muted-foreground uppercase font-semibold block mb-1">Started At</span>
-                <span className="font-bold text-white">{campaign.startedAt ? new Date(campaign.startedAt).toLocaleString() : "Pending"}</span>
+                <span className="font-bold text-white">{campaign.started_at ? new Date(campaign.started_at).toLocaleString() : "Pending"}</span>
               </div>
               <div className="p-3.5 bg-white/2 border border-white/5 rounded-xl">
                 <span className="text-muted-foreground uppercase font-semibold block mb-1">Finished At</span>
-                <span className="font-bold text-white">{campaign.completedAt ? new Date(campaign.completedAt).toLocaleString() : "Running"}</span>
+                <span className="font-bold text-white">{campaign.completed_at ? new Date(campaign.completed_at).toLocaleString() : "Running"}</span>
               </div>
               <div className="p-3.5 bg-white/2 border border-white/5 rounded-xl">
                 <span className="text-muted-foreground uppercase font-semibold block mb-1">WABA Sender Linked</span>
@@ -227,8 +253,8 @@ export default function CampaignDetails() {
           <div className="mt-6 p-4 bg-primary/5 border border-primary/10 rounded-xl flex items-center gap-3">
             <Tag className="w-5 h-5 text-primary" />
             <div className="text-xs">
-              <span className="font-bold text-white block">Audience Tag Targets</span>
-              <span className="text-muted-foreground mt-0.5 block">This campaign broadcasted to members matching segment tags.</span>
+              <span className="font-bold text-white block">Audience Target</span>
+              <span className="text-muted-foreground mt-0.5 block">This campaign broadcasted to target segments.</span>
             </div>
           </div>
         </div>
@@ -262,10 +288,9 @@ export default function CampaignDetails() {
                 messages.map((msg) => (
                   <tr key={msg.id} className="hover:bg-white/2 transition-colors">
                     <td className="px-6 py-4 text-sm font-semibold text-white">
-                      {/* Placeholder name mapping */}
-                      Receiver (ID: {msg.contactId.slice(0, 5)})
+                      Receiver (ID: {msg.contact_id.slice(0, 5)})
                     </td>
-                    <td className="px-6 py-4 text-xs text-muted-foreground font-mono">{msg.waMessageId || "Pending"}</td>
+                    <td className="px-6 py-4 text-xs text-muted-foreground font-mono">{msg.wa_message_id || "Pending"}</td>
                     <td className="px-6 py-4">
                       <span className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded-full uppercase ${
                         msg.status === "read" ? "bg-sky-500/10 text-sky-400 border border-sky-500/20" :
@@ -277,15 +302,15 @@ export default function CampaignDetails() {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-xs text-muted-foreground">
-                      {msg.readAt ? `Read: ${new Date(msg.readAt).toLocaleTimeString()}` :
-                       msg.deliveredAt ? `Deliv: ${new Date(msg.deliveredAt).toLocaleTimeString()}` :
-                       msg.sentAt ? `Sent: ${new Date(msg.sentAt).toLocaleTimeString()}` : "Pending"}
+                      {msg.read_at ? `Read: ${new Date(msg.read_at).toLocaleTimeString()}` :
+                       msg.delivered_at ? `Deliv: ${new Date(msg.delivered_at).toLocaleTimeString()}` :
+                       msg.sent_at ? `Sent: ${new Date(msg.sent_at).toLocaleTimeString()}` : "Pending"}
                     </td>
                     <td className="px-6 py-4 text-xs text-right">
                       {msg.status === "failed" ? (
                         <div className="flex items-center justify-end gap-1.5 text-rose-400">
                           <AlertTriangle className="w-3.5 h-3.5" />
-                          <span className="truncate max-w-xs">{msg.failureReason}</span>
+                          <span className="truncate max-w-xs">{msg.failure_reason}</span>
                         </div>
                       ) : "Delivered successfully"}
                     </td>

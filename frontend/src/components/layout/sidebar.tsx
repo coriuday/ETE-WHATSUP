@@ -109,10 +109,10 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
         <div className="p-4 border-t border-white/5 bg-slate-950/50">
           <div className="flex items-center gap-3 px-2 py-1.5">
             <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-primary to-accent-gradient flex items-center justify-center font-bold text-sm text-primary-foreground uppercase shadow-md shadow-primary/10">
-              {user.fullName.slice(0, 2)}
+              {(user.full_name || "").slice(0, 2)}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-bold text-white truncate">{user.fullName}</p>
+              <p className="text-xs font-bold text-white truncate">{user.full_name}</p>
               <p className="text-[10px] text-muted-foreground capitalize mt-0.5 font-medium">
                 {user.role.replace("_", " ")}
               </p>

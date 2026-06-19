@@ -49,7 +49,7 @@ impl<'a> AuthService<'a> {
             INSERT INTO users (
                 email, password_hash, first_name, last_name,
                 role, status, email_verify_token, email_verify_expires_at
-            ) VALUES ($1, $2, $3, $4, 'team_member', 'pending_verification', $5, $6)
+            ) VALUES ($1, $2, $3, $4, 'business_admin', 'active', $5, $6)
             RETURNING id, email, first_name, last_name, role::text, status::text,
                       email_verified, two_factor_enabled, created_at
             "#,

@@ -1,31 +1,45 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { 
-  Users, 
-  Search, 
-  Plus, 
-  Download, 
-  Upload, 
-  Trash2, 
-  Tag, 
-  ChevronLeft, 
-  ChevronRight, 
-  Filter, 
-  X
+import {
+  Users,
+  Search,
+  Plus,
+  Upload,
+  Trash2,
+  Tag,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  X,
+  AlertCircle,
+  RefreshCw,
+  Download
 } from "lucide-react";
 import toast from "react-hot-toast";
-import { Contact } from "@/types";
+
+interface ContactItem {
+  id: string;
+  phone_number: string;
+  first_name: string | null;
+  last_name: string | null;
+  email: string | null;
+  tags: string[];
+  wa_status: string;
+  source: string;
+  created_at: string;
+}
 
 export default function Contacts() {
-  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [contacts, setContacts] = useState<ContactItem[]>([]);
   const [loading, setLoading] = useState(true);
-  
+  const [error, setError] = useState("");
+
   // Search & Filter
   const [search, setSearch] = useState("");
   const [selectedTag, setSelectedTag] = useState("");
   const [allTags, setAllTags] = useState<string[]>([]);
-  
+
   // Pagination
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -34,6 +48,7 @@ export default function Contacts() {
   // Dialog Modals
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   // Add Contact Form State
   const [firstName, setFirstName] = useState("");
@@ -44,41 +59,33 @@ export default function Contacts() {
 
   // Import State
   const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
 
   const fetchContacts = async () => {
     setLoading(true);
+    setError("");
     try {
       const { api } = await import("@/lib/api");
       const res = await api.get("/contacts", {
         params: {
           page,
           search: search || undefined,
-          tag: selectedTag || undefined,
+          tags: selectedTag || undefined,
         }
       });
-      setContacts(res.data.data.contacts || []);
-      setTotalPages(res.data.data.totalPages || 1);
-      setTotalCount(res.data.data.totalCount || 0);
+      // Backend returns: { success, data: { data: [...], pagination: { total, page, total_pages, ... } } }
+      const responseData = res.data.data;
+      setContacts(responseData.data || []);
+      setTotalPages(responseData.pagination?.total_pages || 1);
+      setTotalCount(responseData.pagination?.total || 0);
 
-      // Derive all tags dynamically if not cached
-      const fetchedContacts: Contact[] = res.data.data.contacts || [];
+      // Derive all tags dynamically
       const tags = new Set<string>();
-      fetchedContacts.forEach(c => c.tags?.forEach(t => tags.add(t)));
-      setAllTags(Array.from(tags));
-    } catch (e) {
-      console.error("Failed loading contacts, using mock data", e);
-      // Premium Mock Data
-      const mockContacts: Contact[] = [
-        { id: "1", organizationId: "1", phoneNumber: "+919876543210", firstName: "Rahul", lastName: "Sharma", email: "rahul@example.com", tags: ["Leads", "JunePromo"], customFields: {}, status: "active", createdAt: "2026-06-01T10:00:00Z", updatedAt: "2026-06-01T10:00:00Z" },
-        { id: "2", organizationId: "1", phoneNumber: "+919999888877", firstName: "Priya", lastName: "Patel", email: "priya@example.com", tags: ["Customers", "HighValue"], customFields: {}, status: "active", createdAt: "2026-06-02T12:00:00Z", updatedAt: "2026-06-02T12:00:00Z" },
-        { id: "3", organizationId: "1", phoneNumber: "+918888777766", firstName: "Amit", lastName: "Kumar", email: "amit@example.com", tags: ["Leads"], customFields: {}, status: "active", createdAt: "2026-06-04T09:00:00Z", updatedAt: "2026-06-04T09:00:00Z" },
-        { id: "4", organizationId: "1", phoneNumber: "+15550199283", firstName: "Sarah", lastName: "Connor", email: "sarah@cyberdyne.com", tags: ["Supporters", "USA"], customFields: {}, status: "unsubscribed", createdAt: "2026-06-05T08:00:00Z", updatedAt: "2026-06-05T08:00:00Z" },
-        { id: "5", organizationId: "1", phoneNumber: "+917777666655", firstName: "Neha", lastName: "Singh", email: "neha@example.com", tags: ["Customers"], customFields: {}, status: "active", createdAt: "2026-06-08T11:00:00Z", updatedAt: "2026-06-08T11:00:00Z" },
-      ];
-      setContacts(mockContacts);
-      setAllTags(["Leads", "JunePromo", "Customers", "HighValue", "Supporters", "USA"]);
-      setTotalCount(mockContacts.length);
-      setTotalPages(1);
+      (responseData.data || []).forEach((c: ContactItem) => c.tags?.forEach((t: string) => tags.add(t)));
+      if (tags.size > 0) setAllTags(Array.from(tags));
+    } catch (e: any) {
+      const msg = e.response?.data?.error?.message || "Failed to load contacts";
+      setError(typeof msg === "string" ? msg : "Failed to load contacts");
     } finally {
       setLoading(false);
     }
@@ -86,6 +93,7 @@ export default function Contacts() {
 
   useEffect(() => {
     fetchContacts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, selectedTag]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -96,16 +104,17 @@ export default function Contacts() {
 
   const handleAddContact = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitting(true);
     const formattedTags = tagsInput.split(",").map(t => t.trim()).filter(t => t !== "");
 
     try {
       const { api } = await import("@/lib/api");
       await api.post("/contacts", {
-        phoneNumber,
-        firstName: firstName || null,
-        lastName: lastName || null,
+        phone_number: phoneNumber,
+        first_name: firstName || null,
+        last_name: lastName || null,
         email: email || null,
-        tags: formattedTags,
+        tags: formattedTags.length > 0 ? formattedTags : undefined,
       });
 
       toast.success("Contact added successfully!");
@@ -113,7 +122,10 @@ export default function Contacts() {
       resetAddForm();
       fetchContacts();
     } catch (e: any) {
-      toast.error(e.response?.data?.error || "Failed to add contact");
+      const msg = e.response?.data?.error?.message || "Failed to add contact";
+      toast.error(typeof msg === "string" ? msg : "Failed to add contact");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -132,23 +144,27 @@ export default function Contacts() {
       return;
     }
 
+    setImporting(true);
     const formData = new FormData();
     formData.append("file", csvFile);
 
     try {
       const { api } = await import("@/lib/api");
-      await api.post("/contacts/import", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
+      const res = await api.post("/contacts/import", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
       });
 
-      toast.success("Bulk import triggered! Check notifications in a moment.");
+      const jobId = res.data.data?.job_id;
+      toast.success(jobId ? `Import started! Job ID: ${jobId.slice(0, 8)}...` : "Bulk import triggered!");
       setIsImportOpen(false);
       setCsvFile(null);
-      fetchContacts();
+      // Wait a bit then refresh
+      setTimeout(() => fetchContacts(), 3000);
     } catch (e: any) {
-      toast.error(e.response?.data?.error || "Import failed");
+      const msg = e.response?.data?.error?.message || "Import failed";
+      toast.error(typeof msg === "string" ? msg : "Import failed");
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -161,7 +177,8 @@ export default function Contacts() {
       toast.success("Contact deleted");
       fetchContacts();
     } catch (e: any) {
-      toast.error(e.response?.data?.error || "Failed to delete contact");
+      const msg = e.response?.data?.error?.message || "Failed to delete contact";
+      toast.error(typeof msg === "string" ? msg : "Failed to delete");
     }
   };
 
@@ -181,7 +198,7 @@ export default function Contacts() {
             onClick={() => setIsImportOpen(true)}
             className="px-4 py-2 text-xs font-semibold rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 hover-scale flex items-center gap-1.5"
           >
-            <Upload className="w-4 h-4" /> Import CSV/Excel
+            <Upload className="w-4 h-4" /> Import CSV
           </button>
           <button
             onClick={() => setIsAddOpen(true)}
@@ -206,29 +223,24 @@ export default function Contacts() {
         </form>
 
         <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-          {/* Tag Filter */}
-          <div className="relative">
-            <select
-              value={selectedTag}
-              onChange={(e) => {
-                setSelectedTag(e.target.value);
-                setPage(1);
-              }}
-              className="appearance-none bg-white/5 border border-white/10 text-sm font-semibold rounded-xl px-4 py-2.5 pr-8 focus:outline-none focus:ring-2 focus:ring-primary text-white cursor-pointer"
-            >
-              <option value="" className="bg-slate-900">Filter by Tag</option>
-              {allTags.map(tag => (
-                <option key={tag} value={tag} className="bg-slate-900">{tag}</option>
-              ))}
-            </select>
-            <Filter className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground/60 pointer-events-none" />
-          </div>
+          {allTags.length > 0 && (
+            <div className="relative">
+              <select
+                value={selectedTag}
+                onChange={(e) => { setSelectedTag(e.target.value); setPage(1); }}
+                className="appearance-none bg-white/5 border border-white/10 text-sm font-semibold rounded-xl px-4 py-2.5 pr-8 focus:outline-none focus:ring-2 focus:ring-primary text-white cursor-pointer"
+              >
+                <option value="" className="bg-slate-900">Filter by Tag</option>
+                {allTags.map(tag => (
+                  <option key={tag} value={tag} className="bg-slate-900">{tag}</option>
+                ))}
+              </select>
+              <Filter className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground/60 pointer-events-none" />
+            </div>
+          )}
 
           {selectedTag && (
-            <button
-              onClick={() => setSelectedTag("")}
-              className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-muted-foreground hover:text-white hover:bg-white/10"
-            >
+            <button onClick={() => setSelectedTag("")} className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-muted-foreground hover:text-white hover:bg-white/10">
               <X className="w-4 h-4" />
             </button>
           )}
@@ -256,6 +268,16 @@ export default function Contacts() {
                     <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin mx-auto" />
                   </td>
                 </tr>
+              ) : error ? (
+                <tr>
+                  <td colSpan={6} className="px-6 py-10 text-center">
+                    <AlertCircle className="w-6 h-6 text-rose-400 mx-auto mb-2" />
+                    <p className="text-muted-foreground text-sm mb-3">{error}</p>
+                    <button onClick={fetchContacts} className="px-4 py-1.5 text-xs font-semibold rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10">
+                      <RefreshCw className="w-3.5 h-3.5 inline mr-1" /> Retry
+                    </button>
+                  </td>
+                </tr>
               ) : contacts.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-10 text-center text-muted-foreground text-sm">
@@ -266,11 +288,11 @@ export default function Contacts() {
                 contacts.map((contact) => (
                   <tr key={contact.id} className="hover:bg-white/2 transition-colors">
                     <td className="px-6 py-4 text-sm font-semibold text-white">
-                      {contact.firstName || contact.lastName 
-                        ? `${contact.firstName || ""} ${contact.lastName || ""}`.trim()
+                      {contact.first_name || contact.last_name
+                        ? `${contact.first_name || ""} ${contact.last_name || ""}`.trim()
                         : "Unnamed Contact"}
                     </td>
-                    <td className="px-6 py-4 text-sm text-muted-foreground font-mono">{contact.phoneNumber}</td>
+                    <td className="px-6 py-4 text-sm text-muted-foreground font-mono">{contact.phone_number}</td>
                     <td className="px-6 py-4 text-sm text-muted-foreground">{contact.email || "—"}</td>
                     <td className="px-6 py-4">
                       <div className="flex flex-wrap gap-1.5">
@@ -283,10 +305,10 @@ export default function Contacts() {
                     </td>
                     <td className="px-6 py-4">
                       <span className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded-full uppercase ${
-                        contact.status === "active" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                        contact.wa_status === "active" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
                         "bg-red-500/10 text-red-400 border border-red-500/20"
                       }`}>
-                        {contact.status}
+                        {contact.wa_status}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">
@@ -335,10 +357,7 @@ export default function Contacts() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="fixed inset-0 bg-slate-950/65 backdrop-blur-sm" onClick={() => setIsAddOpen(false)} />
           <div className="glass-panel w-full max-w-lg rounded-2xl border border-white/10 p-6 z-10 shadow-2xl relative">
-            <button
-              onClick={() => setIsAddOpen(false)}
-              className="absolute right-4 top-4 text-muted-foreground hover:text-white"
-            >
+            <button onClick={() => setIsAddOpen(false)} className="absolute right-4 top-4 text-muted-foreground hover:text-white">
               <X className="w-5 h-5" />
             </button>
             <h2 className="text-lg font-bold text-white mb-4">Add New Contact</h2>
@@ -347,71 +366,40 @@ export default function Contacts() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-muted-foreground mb-1.5">First Name</label>
-                  <input
-                    type="text"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm text-white"
-                  />
+                  <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)}
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm text-white" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-muted-foreground mb-1.5">Last Name</label>
-                  <input
-                    type="text"
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm text-white"
-                  />
+                  <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)}
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm text-white" />
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground mb-1.5">Phone Number (with Country Code)</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="+919876543210"
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm text-white"
-                />
+                <input type="text" required placeholder="+919876543210" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value)}
+                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm text-white" />
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground mb-1.5">Email Address</label>
-                <input
-                  type="email"
-                  placeholder="contact@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm text-white"
-                />
+                <input type="email" placeholder="contact@example.com" value={email} onChange={(e) => setEmail(e.target.value)}
+                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm text-white" />
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-muted-foreground mb-1.5">Tags (comma separated)</label>
-                <input
-                  type="text"
-                  placeholder="Leads, Customer, VIP"
-                  value={tagsInput}
-                  onChange={(e) => setTagsInput(e.target.value)}
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm text-white"
-                />
+                <input type="text" placeholder="Leads, Customer, VIP" value={tagsInput} onChange={(e) => setTagsInput(e.target.value)}
+                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm text-white" />
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setIsAddOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-primary text-primary-foreground hover:bg-primary/95"
-                >
-                  Add Contact
+                <button type="button" onClick={() => setIsAddOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10">Cancel</button>
+                <button type="submit" disabled={submitting}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-primary text-primary-foreground hover:bg-primary/95 disabled:opacity-50 flex items-center gap-1.5">
+                  {submitting ? <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> : "Add Contact"}
                 </button>
               </div>
             </form>
@@ -424,14 +412,11 @@ export default function Contacts() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="fixed inset-0 bg-slate-950/65 backdrop-blur-sm" onClick={() => setIsImportOpen(false)} />
           <div className="glass-panel w-full max-w-md rounded-2xl border border-white/10 p-6 z-10 shadow-2xl relative">
-            <button
-              onClick={() => setIsImportOpen(false)}
-              className="absolute right-4 top-4 text-muted-foreground hover:text-white"
-            >
+            <button onClick={() => setIsImportOpen(false)} className="absolute right-4 top-4 text-muted-foreground hover:text-white">
               <X className="w-5 h-5" />
             </button>
             <h2 className="text-lg font-bold text-white mb-2">Import Spreadsheet</h2>
-            <p className="text-muted-foreground text-xs mb-4">Choose a CSV file containing columns like firstName, lastName, phoneNumber, email, tags.</p>
+            <p className="text-muted-foreground text-xs mb-4">Choose a CSV file containing columns: phone_number, first_name, last_name, email, tags.</p>
 
             <form onSubmit={handleImportContacts} className="space-y-4">
               <div className="p-8 border border-dashed border-white/15 rounded-2xl flex flex-col items-center justify-center bg-white/2 hover:bg-white/4 cursor-pointer transition-colors relative">
@@ -447,18 +432,11 @@ export default function Contacts() {
               </div>
 
               <div className="flex items-center justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setIsImportOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-primary text-primary-foreground hover:bg-primary/95"
-                >
-                  Import File
+                <button type="button" onClick={() => setIsImportOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10">Cancel</button>
+                <button type="submit" disabled={importing}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-primary text-primary-foreground hover:bg-primary/95 disabled:opacity-50 flex items-center gap-1.5">
+                  {importing ? <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> : "Import File"}
                 </button>
               </div>
             </form>

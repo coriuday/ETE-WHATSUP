@@ -35,17 +35,17 @@ api.interceptors.response.use(
         if (!refreshToken) throw new Error("No refresh token found");
 
         const response = await axios.post(`${API_URL}/auth/refresh`, {
-          refreshToken,
+          refresh_token: refreshToken,
         });
 
-        const { accessToken, newRefreshToken } = response.data.data;
-        Cookies.set("access_token", accessToken, { expires: 1 / 96 }); // 15 mins
+        const { access_token, refresh_token: newRefreshToken } = response.data.data;
+        Cookies.set("access_token", access_token, { expires: 1 / 96 }); // 15 mins
         if (newRefreshToken) {
           Cookies.set("refresh_token", newRefreshToken, { expires: 30 }); // 30 days
         }
 
         originalRequest.headers = originalRequest.headers || {};
-        originalRequest.headers["Authorization"] = `Bearer ${accessToken}`;
+        originalRequest.headers["Authorization"] = `Bearer ${access_token}`;
         return api(originalRequest);
       } catch (refreshError) {
         // Clear tokens and redirect to login

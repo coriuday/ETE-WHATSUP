@@ -3,16 +3,17 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { MessageSquare, Lock, Mail, ArrowRight, User, Building } from "lucide-react";
+import { useAuthStore } from "@/store/authStore";
+import { MessageSquare, Lock, Mail, ArrowRight, User } from "lucide-react";
 import toast from "react-hot-toast";
 
 export default function Register() {
   const router = useRouter();
-  
+  const { setTokens, setUser } = useAuthStore();
+
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [orgName, setOrgName] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -21,20 +22,43 @@ export default function Register() {
 
     try {
       const { api } = await import("@/lib/api");
-      
-      // Perform register call
+
+      const nameParts = fullName.trim().split(" ");
+      const firstName = nameParts[0] || "User";
+      const lastName = nameParts.length > 1 ? nameParts.slice(1).join(" ") : "Name";
+
+      // Register user
       await api.post("/auth/register", {
-        fullName,
+        first_name: firstName,
+        last_name: lastName,
         email,
         password,
-        organizationName: orgName,
       });
 
-      toast.success("Account created successfully! Please verify your email.");
-      router.push("/login");
+      // Auto-login after registration
+      const loginRes = await api.post("/auth/login", { email, password });
+
+      if (loginRes.data.data.requires_2fa) {
+        toast.success("Account created! Please log in with 2FA.");
+        router.push("/login");
+        return;
+      }
+
+      const { access_token, refresh_token, user } = loginRes.data.data.tokens 
+        ? { ...loginRes.data.data.tokens, user: loginRes.data.data.user }
+        : loginRes.data.data;
+        
+      setTokens(access_token, refresh_token);
+      setUser(user);
+
+      toast.success("Account created! Let's set up your organization.");
+      router.push("/onboarding");
     } catch (err: any) {
-      const errorMsg = err.response?.data?.error || "Registration failed. Please try again.";
-      toast.error(errorMsg);
+      const errorMsg =
+        err.response?.data?.error?.message ||
+        err.response?.data?.error ||
+        "Registration failed. Please try again.";
+      toast.error(typeof errorMsg === "string" ? errorMsg : "Registration failed.");
     } finally {
       setIsLoading(false);
     }
@@ -78,26 +102,6 @@ export default function Register() {
             </div>
 
             <div>
-              <label htmlFor="orgName" className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                Organization Name
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                  <Building className="h-5 w-5 text-muted-foreground/60" />
-                </div>
-                <input
-                  id="orgName"
-                  type="text"
-                  required
-                  placeholder="Acme Corp"
-                  value={orgName}
-                  onChange={(e) => setOrgName(e.target.value)}
-                  className="block w-full pl-11 pr-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all placeholder-white/20 text-sm text-white"
-                />
-              </div>
-            </div>
-
-            <div>
               <label htmlFor="email" className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
                 Email Address
               </label>
@@ -130,11 +134,13 @@ export default function Register() {
                   type="password"
                   required
                   placeholder="••••••••"
+                  minLength={8}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="block w-full pl-11 pr-4 py-3 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all placeholder-white/20 text-sm text-white"
                 />
               </div>
+              <p className="text-[10px] text-muted-foreground mt-1.5">Min 8 characters</p>
             </div>
 
             <button

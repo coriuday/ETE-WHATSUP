@@ -1,43 +1,53 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { 
-  Smartphone, 
-  Plus, 
-  RefreshCw, 
-  Trash2, 
-  Lock, 
+import {
+  Smartphone,
+  Plus,
+  RefreshCw,
+  Trash2,
+  Lock,
   X,
-  Globe
+  Globe,
+  AlertCircle
 } from "lucide-react";
 import toast from "react-hot-toast";
-import { WhatsAppAccount } from "@/types";
+
+interface WaAccount {
+  id: string;
+  display_name: string;
+  phone_number: string;
+  status: string;
+  type: string;
+  quality_rating: string | null;
+  total_msgs_sent: number;
+  connected_at: string | null;
+}
 
 export default function WhatsAppAccountsManager() {
-  const [accounts, setAccounts] = useState<WhatsAppAccount[]>([]);
+  const [accounts, setAccounts] = useState<WaAccount[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [isOpen, setIsOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   // Form State
-  const [name, setName] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
-  const [phoneId, setPhoneId] = useState("");
+  const [phoneNumberId, setPhoneNumberId] = useState("");
   const [wabaId, setWabaId] = useState("");
-  const [token, setToken] = useState("");
+  const [accessToken, setAccessToken] = useState("");
 
   const fetchAccounts = async () => {
     setLoading(true);
+    setError("");
     try {
       const { api } = await import("@/lib/api");
       const res = await api.get("/whatsapp/accounts");
       setAccounts(res.data.data.accounts || []);
-    } catch (e) {
-      console.error("Failed loading accounts via API, loading mock data", e);
-      // Mocks
-      setAccounts([
-        { id: "1", organizationId: "1", name: "Acme Support Line", phoneNumber: "+919876543210", phoneNumberId: "1098239081230", wabaId: "90812309812", status: "connected", profileName: "Acme Corp", profilePictureUrl: "", createdAt: "", updatedAt: "" },
-        { id: "2", organizationId: "1", name: "Marketing Broadcast Out", phoneNumber: "+919999888877", phoneNumberId: "2098239081240", wabaId: "90812309812", status: "disconnected", profileName: "Acme Offers", profilePictureUrl: "", createdAt: "", updatedAt: "" },
-      ]);
+    } catch (e: any) {
+      const msg = e.response?.data?.error?.message || "Failed to load WhatsApp accounts";
+      setError(typeof msg === "string" ? msg : "Failed to load accounts");
     } finally {
       setLoading(false);
     }
@@ -49,14 +59,15 @@ export default function WhatsAppAccountsManager() {
 
   const handleLinkAccount = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitting(true);
     try {
       const { api } = await import("@/lib/api");
-      await api.post("/whatsapp/connect", {
-        name,
-        phoneNumber,
-        phoneNumberId: phoneId,
-        wabaId,
-        accessToken: token,
+      await api.post("/whatsapp/accounts", {
+        display_name: displayName,
+        phone_number: phoneNumber,
+        phone_number_id: phoneNumberId,
+        waba_id: wabaId,
+        access_token: accessToken,
       });
 
       toast.success("WhatsApp Account connected successfully!");
@@ -64,7 +75,10 @@ export default function WhatsAppAccountsManager() {
       resetForm();
       fetchAccounts();
     } catch (e: any) {
-      toast.error(e.response?.data?.error || "Failed to link WhatsApp account");
+      const msg = e.response?.data?.error?.message || "Failed to link WhatsApp account";
+      toast.error(typeof msg === "string" ? msg : "Failed to link account");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -72,10 +86,11 @@ export default function WhatsAppAccountsManager() {
     try {
       const { api } = await import("@/lib/api");
       await api.post(`/whatsapp/accounts/${id}/sync`);
-      toast.success("Account profile sync'd with Meta Cloud!");
+      toast.success("Account profile synced with Meta Cloud!");
       fetchAccounts();
-    } catch (e) {
-      toast.success("Account synchronized successfully!");
+    } catch (e: any) {
+      const msg = e.response?.data?.error?.message || "Sync failed";
+      toast.error(typeof msg === "string" ? msg : "Sync failed");
     }
   };
 
@@ -84,21 +99,21 @@ export default function WhatsAppAccountsManager() {
 
     try {
       const { api } = await import("@/lib/api");
-      await api.post(`/whatsapp/accounts/${id}/disconnect`);
+      await api.delete(`/whatsapp/accounts/${id}`);
       toast.success("Account disconnected");
       fetchAccounts();
-    } catch (e) {
-      setAccounts(prev => prev.map(a => a.id === id ? { ...a, status: "disconnected" } : a));
-      toast.success("Account disconnected successfully!");
+    } catch (e: any) {
+      const msg = e.response?.data?.error?.message || "Failed to disconnect";
+      toast.error(typeof msg === "string" ? msg : "Failed to disconnect");
     }
   };
 
   const resetForm = () => {
-    setName("");
+    setDisplayName("");
     setPhoneNumber("");
-    setPhoneId("");
+    setPhoneNumberId("");
     setWabaId("");
-    setToken("");
+    setAccessToken("");
   };
 
   return (
@@ -133,7 +148,7 @@ export default function WhatsAppAccountsManager() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-[10px] font-mono bg-slate-950/40 p-3 rounded-xl border border-white/5 w-full md:w-auto">
           <div>
             <span className="text-muted-foreground block font-sans">CALLBACK URL:</span>
-            <span className="text-primary font-bold">http://localhost:8080/api/v1/webhooks/whatsapp</span>
+            <span className="text-primary font-bold">http://localhost:8081/api/v1/webhooks/whatsapp</span>
           </div>
           <div>
             <span className="text-muted-foreground block font-sans">VERIFY TOKEN:</span>
@@ -146,6 +161,14 @@ export default function WhatsAppAccountsManager() {
       {loading ? (
         <div className="flex justify-center items-center py-20">
           <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+        </div>
+      ) : error ? (
+        <div className="glass-panel p-10 rounded-2xl border border-white/5 text-center space-y-4">
+          <AlertCircle className="w-8 h-8 text-rose-400 mx-auto" />
+          <p className="text-muted-foreground text-sm">{error}</p>
+          <button onClick={fetchAccounts} className="px-4 py-2 text-xs font-semibold rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10">
+            <RefreshCw className="w-3.5 h-3.5 inline mr-1.5" /> Retry
+          </button>
         </div>
       ) : accounts.length === 0 ? (
         <div className="glass-panel p-10 rounded-2xl border border-white/5 text-center text-muted-foreground text-sm">
@@ -164,21 +187,21 @@ export default function WhatsAppAccountsManager() {
                     {acc.status}
                   </span>
                   <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-primary to-accent-gradient flex items-center justify-center font-bold text-sm text-primary-foreground uppercase shadow shadow-primary/20">
-                    {acc.name.slice(0, 2)}
+                    {(acc.display_name || "WA").slice(0, 2)}
                   </div>
                 </div>
 
-                <h3 className="text-sm font-bold text-white mb-1">{acc.name}</h3>
-                <p className="text-xs text-muted-foreground font-semibold font-mono mb-4">{acc.phoneNumber || "No phone configured"}</p>
-                
+                <h3 className="text-sm font-bold text-white mb-1">{acc.display_name}</h3>
+                <p className="text-xs text-muted-foreground font-semibold font-mono mb-4">{acc.phone_number || "No phone configured"}</p>
+
                 <div className="space-y-2 text-xs text-muted-foreground bg-white/2 rounded-xl p-3.5 mb-4 font-mono text-[10px]">
                   <div className="flex items-center justify-between">
-                    <span className="font-sans">Phone Number ID:</span>
-                    <span className="font-bold text-white">{acc.phoneNumberId || "—"}</span>
+                    <span className="font-sans">Messages Sent:</span>
+                    <span className="font-bold text-white">{acc.total_msgs_sent || 0}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="font-sans">WABA ID:</span>
-                    <span className="font-bold text-white">{acc.wabaId || "—"}</span>
+                    <span className="font-sans">Quality Rating:</span>
+                    <span className="font-bold text-white">{acc.quality_rating || "N/A"}</span>
                   </div>
                 </div>
               </div>
@@ -222,8 +245,8 @@ export default function WhatsAppAccountsManager() {
                   type="text"
                   required
                   placeholder="e.g. Acme Support Team"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
                   className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm text-white"
                 />
               </div>
@@ -247,8 +270,8 @@ export default function WhatsAppAccountsManager() {
                     type="text"
                     required
                     placeholder="10928392..."
-                    value={phoneId}
-                    onChange={(e) => setPhoneId(e.target.value)}
+                    value={phoneNumberId}
+                    onChange={(e) => setPhoneNumberId(e.target.value)}
                     className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm text-white font-mono"
                   />
                 </div>
@@ -272,8 +295,8 @@ export default function WhatsAppAccountsManager() {
                     type="password"
                     required
                     placeholder="EAAGy..."
-                    value={token}
-                    onChange={(e) => setToken(e.target.value)}
+                    value={accessToken}
+                    onChange={(e) => setAccessToken(e.target.value)}
                     className="w-full pl-9 pr-4 py-2.5 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm text-white font-mono"
                   />
                   <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
@@ -290,9 +313,14 @@ export default function WhatsAppAccountsManager() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-primary text-primary-foreground hover:bg-primary/95"
+                  disabled={submitting}
+                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-primary text-primary-foreground hover:bg-primary/95 disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  Link Account
+                  {submitting ? (
+                    <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    "Link Account"
+                  )}
                 </button>
               </div>
             </form>

@@ -19,63 +19,66 @@ import {
   XAxis, 
   YAxis, 
   Tooltip, 
-  BarChart, 
-  Bar 
 } from "recharts";
-import toast from "react-hot-toast";
+import { useAuthStore } from "@/store/authStore";
 
 interface OverviewStats {
-  sent: number;
-  delivered: number;
-  read: number;
-  failed: number;
-  readRate: number;
-  deliveryRate: number;
+  sent_count: number;
+  delivered_count: number;
+  read_count: number;
+  failed_count: number;
+}
+
+interface Campaign {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  total_recipient_count: number;
+  sent_count: number;
+  delivered_count: number;
+  read_count: number;
+  failed_count: number;
+  created_at: string;
 }
 
 export default function Dashboard() {
+  const { user } = useAuthStore();
   const [stats, setStats] = useState<OverviewStats>({
-    sent: 12480,
-    delivered: 11950,
-    read: 9840,
-    failed: 530,
-    readRate: 82.3,
-    deliveryRate: 95.7
+    sent_count: 0,
+    delivered_count: 0,
+    read_count: 0,
+    failed_count: 0,
   });
   
-  const [recentCampaigns, setRecentCampaigns] = useState<any[]>([]);
+  const [recentCampaigns, setRecentCampaigns] = useState<Campaign[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const fetchOverview = async () => {
       try {
         const { api } = await import("@/lib/api");
-        const res = await api.get("/analytics/overview");
-        if (res.data.data) {
-          const s = res.data.data;
-          const total = s.sent_count || 0;
-          const readRate = total > 0 ? (s.read_count / total) * 100 : 0;
-          const deliveryRate = total > 0 ? (s.delivered_count / total) * 100 : 0;
+        
+        // Use Promise.allSettled so one failure doesn't block the other
+        const [statsRes, campaignsRes] = await Promise.allSettled([
+          api.get("/analytics/overview"),
+          api.get("/campaigns?limit=5")
+        ]);
+
+        if (statsRes.status === "fulfilled") {
           setStats({
-            sent: s.sent_count || 12480,
-            delivered: s.delivered_count || 11950,
-            read: s.read_count || 9840,
-            failed: s.failed_count || 530,
-            readRate: parseFloat(readRate.toFixed(1)) || 82.3,
-            deliveryRate: parseFloat(deliveryRate.toFixed(1)) || 95.7
+            sent_count: statsRes.value.data.data?.sent_count || 0,
+            delivered_count: statsRes.value.data.data?.delivered_count || 0,
+            read_count: statsRes.value.data.data?.read_count || 0,
+            failed_count: statsRes.value.data.data?.failed_count || 0,
           });
         }
 
-        const campaignsRes = await api.get("/campaigns");
-        setRecentCampaigns(campaignsRes.data.data.campaigns?.slice(0, 3) || []);
+        if (campaignsRes.status === "fulfilled") {
+          setRecentCampaigns(campaignsRes.value.data.data?.data?.slice(0, 5) || []);
+        }
       } catch (e) {
         console.error("Error fetching dashboard statistics", e);
-        // Load some high quality mock campaigns for premium default appearance
-        setRecentCampaigns([
-          { id: "1", name: "June Newsletter Campaign", type: "promotional", status: "completed", totalRecipientCount: 5000, sentCount: 5000, deliveredCount: 4890, readCount: 4120, failedCount: 110, createdAt: "2026-06-01T10:00:00Z" },
-          { id: "2", name: "OTP Verification Services", type: "transactional", status: "running", totalRecipientCount: 1200, sentCount: 1100, deliveredCount: 1080, readCount: 950, failedCount: 20, createdAt: "2026-06-05T12:00:00Z" },
-          { id: "3", name: "Customer Survey Follow-Up", type: "survey", status: "scheduled", totalRecipientCount: 350, sentCount: 0, deliveredCount: 0, readCount: 0, failedCount: 0, createdAt: "2026-06-08T09:00:00Z" },
-        ]);
       } finally {
         setIsLoading(false);
       }
@@ -83,14 +86,20 @@ export default function Dashboard() {
     fetchOverview();
   }, []);
 
+  const total = stats.sent_count || 0;
+  const readRate = total > 0 ? ((stats.read_count / total) * 100).toFixed(1) : "0.0";
+  const deliveryRate = total > 0 ? ((stats.delivered_count / total) * 100).toFixed(1) : "0.0";
+  const errorRate = total > 0 ? ((stats.failed_count / total) * 100).toFixed(1) : "0.0";
+
+  // Mock chart data since backend doesn't have timeseries endpoint yet
   const chartData = [
-    { name: "Mon", Sent: 1200, Delivered: 1150, Read: 920 },
-    { name: "Tue", Sent: 1800, Delivered: 1720, Read: 1450 },
-    { name: "Wed", Sent: 1500, Delivered: 1450, Read: 1200 },
-    { name: "Thu", Sent: 2200, Delivered: 2100, Read: 1800 },
-    { name: "Fri", Sent: 3100, Delivered: 3000, Read: 2450 },
-    { name: "Sat", Sent: 1400, Delivered: 1350, Read: 1120 },
-    { name: "Sun", Sent: 1280, Delivered: 1180, Read: 900 },
+    { name: "Mon", Sent: 0, Delivered: 0, Read: 0 },
+    { name: "Tue", Sent: 0, Delivered: 0, Read: 0 },
+    { name: "Wed", Sent: 0, Delivered: 0, Read: 0 },
+    { name: "Thu", Sent: Math.max(0, stats.sent_count - 50), Delivered: Math.max(0, stats.delivered_count - 50), Read: Math.max(0, stats.read_count - 50) },
+    { name: "Fri", Sent: stats.sent_count, Delivered: stats.delivered_count, Read: stats.read_count },
+    { name: "Sat", Sent: 0, Delivered: 0, Read: 0 },
+    { name: "Sun", Sent: 0, Delivered: 0, Read: 0 },
   ];
 
   return (
@@ -130,9 +139,9 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-white">{stats.sent.toLocaleString()}</span>
+            <span className="text-2xl font-bold text-white">{stats.sent_count.toLocaleString()}</span>
             <span className="text-xs text-primary font-bold flex items-center gap-0.5">
-              <TrendingUp className="w-3.5 h-3.5" /> +12%
+              <TrendingUp className="w-3.5 h-3.5" /> All time
             </span>
           </div>
         </div>
@@ -147,8 +156,8 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-white">{stats.delivered.toLocaleString()}</span>
-            <span className="text-xs text-emerald-400 font-bold">{stats.deliveryRate}% Rate</span>
+            <span className="text-2xl font-bold text-white">{stats.delivered_count.toLocaleString()}</span>
+            <span className="text-xs text-emerald-400 font-bold">{deliveryRate}% Rate</span>
           </div>
         </div>
 
@@ -162,8 +171,8 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-white">{stats.readRate}%</span>
-            <span className="text-xs text-sky-400 font-bold">{stats.read.toLocaleString()} Messages</span>
+            <span className="text-2xl font-bold text-white">{readRate}%</span>
+            <span className="text-xs text-sky-400 font-bold">{stats.read_count.toLocaleString()} Messages</span>
           </div>
         </div>
 
@@ -177,8 +186,8 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-white">{stats.failed.toLocaleString()}</span>
-            <span className="text-xs text-rose-400 font-bold">Error rate: {((stats.failed / stats.sent) * 100).toFixed(1)}%</span>
+            <span className="text-2xl font-bold text-white">{stats.failed_count.toLocaleString()}</span>
+            <span className="text-xs text-rose-400 font-bold">Error rate: {errorRate}%</span>
           </div>
         </div>
       </div>
@@ -190,7 +199,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h3 className="text-sm font-bold text-white">Daily Outflow Delivery</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">Campaign performance timeline (last 7 days)</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Campaign performance timeline</p>
             </div>
             <div className="flex items-center gap-3">
               <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary">
@@ -240,26 +249,33 @@ export default function Dashboard() {
             </div>
 
             <div className="space-y-4">
-              {recentCampaigns.map((camp) => (
-                <div key={camp.id} className="p-3.5 rounded-xl bg-white/5 border border-white/5 flex items-start justify-between gap-3 hover:bg-white/10 transition-colors">
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold text-white truncate">{camp.name}</p>
-                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider mt-1">{camp.type}</p>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <span className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded-full uppercase ${
-                      camp.status === "completed" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
-                      camp.status === "running" ? "bg-primary/10 text-primary border border-primary/20 animate-pulse" :
-                      "bg-yellow-500/10 text-yellow-400 border border-yellow-500/20"
-                    }`}>
-                      {camp.status}
-                    </span>
-                    <p className="text-[10px] text-muted-foreground mt-1 font-semibold">
-                      {camp.sentCount} / {camp.totalRecipientCount} delivered
-                    </p>
-                  </div>
+              {recentCampaigns.length === 0 ? (
+                <div className="text-center text-xs text-muted-foreground py-4">
+                  No campaigns run yet.
                 </div>
-              ))}
+              ) : (
+                recentCampaigns.map((camp) => (
+                  <div key={camp.id} className="p-3.5 rounded-xl bg-white/5 border border-white/5 flex items-start justify-between gap-3 hover:bg-white/10 transition-colors">
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-white truncate">{camp.name}</p>
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider mt-1">{camp.type}</p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <span className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                        camp.status === "completed" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                        camp.status === "running" ? "bg-primary/10 text-primary border border-primary/20 animate-pulse" :
+                        camp.status === "failed" ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" :
+                        "bg-yellow-500/10 text-yellow-400 border border-yellow-500/20"
+                      }`}>
+                        {camp.status}
+                      </span>
+                      <p className="text-[10px] text-muted-foreground mt-1 font-semibold">
+                        {camp.sent_count || 0} / {camp.total_recipient_count || 0}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 

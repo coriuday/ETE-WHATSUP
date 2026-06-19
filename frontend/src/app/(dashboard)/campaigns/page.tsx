@@ -2,71 +2,104 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { 
-  Send, 
-  Plus, 
-  Clock, 
-  ChevronRight, 
+import {
+  Send,
+  Plus,
+  Clock,
+  ChevronRight,
   Copy,
-  X
+  X,
+  AlertCircle,
+  RefreshCw
 } from "lucide-react";
 import toast from "react-hot-toast";
-import { Campaign, WhatsAppAccount, MessageTemplate } from "@/types";
+
+interface CampaignItem {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  target_type: string;
+  scheduled_at: string | null;
+  created_at: string;
+  updated_at: string;
+  total_recipient_count?: number;
+  sent_count?: number;
+  delivered_count?: number;
+  read_count?: number;
+  failed_count?: number;
+}
+
+interface WaAccount {
+  id: string;
+  display_name: string;
+}
+
+interface Template {
+  id: string;
+  name: string;
+  category: string;
+  variables: string[];
+}
 
 export default function Campaigns() {
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [waAccounts, setWaAccounts] = useState<WhatsAppAccount[]>([]);
-  const [templates, setTemplates] = useState<MessageTemplate[]>([]);
+  const [campaigns, setCampaigns] = useState<CampaignItem[]>([]);
+  const [waAccounts, setWaAccounts] = useState<WaAccount[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   // Wizard State
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [step, setStep] = useState(1);
+  const [submitting, setSubmitting] = useState(false);
 
   // Form State
   const [name, setName] = useState("");
-  const [type, setType] = useState<any>("promotional");
+  const [type, setType] = useState<string>("promotional");
   const [selectedAccount, setSelectedAccount] = useState("");
-  const [targetMode, setTargetMode] = useState<"segment" | "all">("segment");
-  const [selectedSegment, setSelectedSegment] = useState("");
+  const [targetMode, setTargetMode] = useState<"segment" | "all_contacts">("all_contacts");
+  const [selectedSegmentId, setSelectedSegmentId] = useState("");
   const [messageMode, setMessageMode] = useState<"template" | "text">("template");
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [messageBody, setMessageBody] = useState("");
   const [scheduleMode, setScheduleMode] = useState<"immediate" | "scheduled">("immediate");
   const [scheduledDate, setScheduledDate] = useState("");
+  const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
 
   // Derived Template Variables
   const [templateVariables, setTemplateVariables] = useState<Record<string, string>>({});
 
   const fetchCampaignsAndConfig = async () => {
     setLoading(true);
+    setError("");
     try {
       const { api } = await import("@/lib/api");
-      const campaignRes = await api.get("/campaigns");
-      setCampaigns(campaignRes.data.data.campaigns || []);
       
-      const accountRes = await api.get("/whatsapp/accounts");
-      const accounts: WhatsAppAccount[] = accountRes.data.data.accounts || [];
-      setWaAccounts(accounts);
-      if (accounts.length > 0) setSelectedAccount(accounts[0].id);
+      const [campaignRes, accountRes, templateRes] = await Promise.allSettled([
+        api.get("/campaigns"),
+        api.get("/whatsapp/accounts"),
+        api.get("/templates")
+      ]);
 
-      const templateRes = await api.get("/templates");
-      setTemplates(templateRes.data.data.templates || []);
-    } catch (e) {
-      console.error("Failed loading campaigns API, loading mocks", e);
-      // Mock Campaigns
-      setCampaigns([
-        { id: "1", organizationId: "1", waAccountId: "acc1", name: "June Blast", type: "promotional", status: "completed", totalRecipientCount: 2500, sentCount: 2500, deliveredCount: 2450, readCount: 2100, failedCount: 50, createdAt: "2026-06-02T10:00:00Z", updatedAt: "2026-06-02T10:00:00Z" },
-        { id: "2", organizationId: "1", waAccountId: "acc1", name: "OTP Broadcasts", type: "transactional", status: "running", totalRecipientCount: 1500, sentCount: 1200, deliveredCount: 1190, readCount: 1100, failedCount: 10, createdAt: "2026-06-05T09:00:00Z", updatedAt: "2026-06-05T09:00:00Z" },
-        { id: "3", organizationId: "1", waAccountId: "acc1", name: "Weekly Reminder", type: "reminder", status: "scheduled", scheduledAt: "2026-06-12T10:00:00Z", totalRecipientCount: 300, sentCount: 0, deliveredCount: 0, readCount: 0, failedCount: 0, createdAt: "2026-06-08T12:00:00Z", updatedAt: "2026-06-08T12:00:00Z" },
-      ]);
-      setWaAccounts([
-        { id: "acc1", organizationId: "1", name: "Primary WhatsApp Number", status: "connected", createdAt: "", updatedAt: "" }
-      ]);
-      setTemplates([
-        { id: "tpl1", organizationId: "1", name: "welcome_message", category: "utility", language: "en", status: "approved", bodyText: "Hello {{1}}, welcome to our store! Your code is {{2}}.", variables: ["1", "2"], createdAt: "", updatedAt: "" },
-        { id: "tpl2", organizationId: "1", name: "survey_follow_up", category: "marketing", language: "en", status: "approved", bodyText: "Hi {{1}}, could you please fill out our quick survey at {{2}}?", variables: ["1", "2"], createdAt: "", updatedAt: "" },
-      ]);
+      if (campaignRes.status === "fulfilled") {
+        setCampaigns(campaignRes.value.data.data.data || []);
+      } else {
+        throw new Error(campaignRes.reason?.response?.data?.error?.message || "Failed to load campaigns");
+      }
+      
+      if (accountRes.status === "fulfilled") {
+        const accounts: WaAccount[] = accountRes.value.data.data.accounts || [];
+        setWaAccounts(accounts);
+        if (accounts.length > 0) setSelectedAccount(accounts[0].id);
+      }
+
+      if (templateRes.status === "fulfilled") {
+        setTemplates(templateRes.value.data.data.data || []);
+      }
+    } catch (e: any) {
+      const msg = e.message || "Failed to load campaigns data";
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -79,16 +112,24 @@ export default function Campaigns() {
   const handleTemplateChange = (id: string) => {
     setSelectedTemplateId(id);
     const selected = templates.find(t => t.id === id);
-    if (selected) {
+    if (selected && selected.variables) {
       const vars: Record<string, string> = {};
       selected.variables.forEach(v => {
         vars[v] = "";
       });
       setTemplateVariables(vars);
+    } else {
+      setTemplateVariables({});
     }
   };
 
   const handleLaunchCampaign = async () => {
+    if (!selectedAccount) {
+      toast.error("Please select a WhatsApp account");
+      return;
+    }
+
+    setSubmitting(true);
     try {
       const { api } = await import("@/lib/api");
       
@@ -96,21 +137,25 @@ export default function Campaigns() {
       const createRes = await api.post("/campaigns", {
         name,
         type,
-        waAccountId: selectedAccount,
-        templateId: messageMode === "template" ? selectedTemplateId : null,
-        messageBody: messageMode === "text" ? messageBody : null,
-        scheduledAt: scheduleMode === "scheduled" ? scheduledDate : null,
-        // Mocking segment target
-        targetSegment: targetMode === "segment" ? selectedSegment : null,
+        wa_account_id: selectedAccount,
+        target_type: targetMode,
+        target_segment_id: targetMode === "segment" ? selectedSegmentId : undefined,
+        template_id: messageMode === "template" ? selectedTemplateId : undefined,
+        message_body: messageMode === "text" ? messageBody : undefined,
+        timezone,
       });
 
-      const campaignId = createRes.data.data.campaign.id;
+      const campaign = createRes.data.data;
+      const campaignId = campaign.id;
 
       if (scheduleMode === "immediate") {
         // Launch Campaign Immediately
         await api.post(`/campaigns/${campaignId}/launch`);
         toast.success("Campaign launched successfully!");
       } else {
+        await api.post(`/campaigns/${campaignId}/schedule`, {
+          scheduled_at: new Date(scheduledDate).toISOString()
+        });
         toast.success("Campaign scheduled successfully!");
       }
 
@@ -118,7 +163,10 @@ export default function Campaigns() {
       resetWizard();
       fetchCampaignsAndConfig();
     } catch (e: any) {
-      toast.error(e.response?.data?.error || "Failed to launch campaign");
+      const msg = e.response?.data?.error?.message || "Failed to launch campaign";
+      toast.error(typeof msg === "string" ? msg : "Failed to launch campaign");
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -126,8 +174,8 @@ export default function Campaigns() {
     setStep(1);
     setName("");
     setType("promotional");
-    setTargetMode("segment");
-    setSelectedSegment("");
+    setTargetMode("all_contacts");
+    setSelectedSegmentId("");
     setMessageMode("template");
     setSelectedTemplateId("");
     setMessageBody("");
@@ -143,7 +191,8 @@ export default function Campaigns() {
       toast.success("Campaign cloned to draft!");
       fetchCampaignsAndConfig();
     } catch (e: any) {
-      toast.error(e.response?.data?.error || "Failed to clone campaign");
+      const msg = e.response?.data?.error?.message || "Failed to clone campaign";
+      toast.error(typeof msg === "string" ? msg : "Failed to clone");
     }
   };
 
@@ -174,6 +223,14 @@ export default function Campaigns() {
         <div className="flex justify-center items-center py-20">
           <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
         </div>
+      ) : error ? (
+        <div className="glass-panel p-10 rounded-2xl border border-white/5 text-center space-y-4">
+          <AlertCircle className="w-8 h-8 text-rose-400 mx-auto" />
+          <p className="text-muted-foreground text-sm">{error}</p>
+          <button onClick={fetchCampaignsAndConfig} className="px-4 py-2 text-xs font-semibold rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10">
+            <RefreshCw className="w-3.5 h-3.5 inline mr-1.5" /> Retry
+          </button>
+        </div>
       ) : campaigns.length === 0 ? (
         <div className="glass-panel p-10 rounded-2xl border border-white/5 text-center text-muted-foreground text-sm">
           No campaigns triggered yet. Launch a new campaign to begin.
@@ -187,6 +244,7 @@ export default function Campaigns() {
                   <span className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded-full uppercase ${
                     camp.status === "completed" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
                     camp.status === "running" ? "bg-primary/10 text-primary border border-primary/20 animate-pulse" :
+                    camp.status === "failed" ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" :
                     "bg-yellow-500/10 text-yellow-400 border border-yellow-500/20"
                   }`}>
                     {camp.status}
@@ -196,33 +254,33 @@ export default function Campaigns() {
 
                 <h3 className="text-sm font-bold text-white mb-2">{camp.name}</h3>
                 
-                {camp.status === "scheduled" && camp.scheduledAt && (
+                {camp.status === "scheduled" && camp.scheduled_at && (
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-4">
                     <Clock className="w-3.5 h-3.5" />
-                    <span>Scheduled for: {new Date(camp.scheduledAt).toLocaleString()}</span>
+                    <span>Scheduled for: {new Date(camp.scheduled_at).toLocaleString()}</span>
                   </div>
                 )}
 
                 {/* Funnel Metrics */}
-                {camp.status !== "scheduled" && (
+                {camp.status !== "scheduled" && camp.status !== "draft" && (
                   <div className="grid grid-cols-4 gap-2 text-center bg-white/2 rounded-xl p-3.5 mb-4">
                     <div>
                       <p className="text-[10px] text-muted-foreground font-medium uppercase">Target</p>
-                      <p className="text-xs font-bold text-white mt-0.5">{camp.totalRecipientCount}</p>
+                      <p className="text-xs font-bold text-white mt-0.5">{camp.total_recipient_count || 0}</p>
                     </div>
                     <div>
                       <p className="text-[10px] text-muted-foreground font-medium uppercase">Sent</p>
-                      <p className="text-xs font-bold text-white mt-0.5">{camp.sentCount}</p>
+                      <p className="text-xs font-bold text-white mt-0.5">{camp.sent_count || 0}</p>
                     </div>
                     <div>
                       <p className="text-[10px] text-muted-foreground font-medium uppercase">Read</p>
                       <p className="text-xs font-bold text-sky-400 mt-0.5">
-                        {camp.sentCount > 0 ? `${Math.round((camp.readCount / camp.sentCount) * 100)}%` : "0%"}
+                        {(camp.sent_count || 0) > 0 ? `${Math.round(((camp.read_count || 0) / (camp.sent_count || 1)) * 100)}%` : "0%"}
                       </p>
                     </div>
                     <div>
                       <p className="text-[10px] text-muted-foreground font-medium uppercase">Failed</p>
-                      <p className="text-xs font-bold text-rose-400 mt-0.5">{camp.failedCount}</p>
+                      <p className="text-xs font-bold text-rose-400 mt-0.5">{camp.failed_count || 0}</p>
                     </div>
                   </div>
                 )}
@@ -302,7 +360,7 @@ export default function Campaigns() {
                       className="w-full px-3.5 py-2.5 bg-slate-900 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm text-white"
                     >
                       {waAccounts.map(a => (
-                        <option key={a.id} value={a.id}>{a.name}</option>
+                        <option key={a.id} value={a.id}>{a.display_name}</option>
                       ))}
                     </select>
                   </div>
@@ -325,13 +383,13 @@ export default function Campaigns() {
                           : "bg-white/2 border-white/10 text-muted-foreground hover:text-white"
                       }`}
                     >
-                      <span className="block text-xs font-bold">Filter by Tag Segment</span>
+                      <span className="block text-xs font-bold">Filter by Segment</span>
                     </button>
                     <button
                       type="button"
-                      onClick={() => setTargetMode("all")}
+                      onClick={() => setTargetMode("all_contacts")}
                       className={`p-3 rounded-xl border text-center transition-all ${
-                        targetMode === "all" 
+                        targetMode === "all_contacts" 
                           ? "bg-primary/10 border-primary text-primary" 
                           : "bg-white/2 border-white/10 text-muted-foreground hover:text-white"
                       }`}
@@ -343,12 +401,12 @@ export default function Campaigns() {
 
                 {targetMode === "segment" && (
                   <div>
-                    <label className="block text-xs font-semibold text-muted-foreground mb-1.5">Audience Segment Tag</label>
+                    <label className="block text-xs font-semibold text-muted-foreground mb-1.5">Audience Segment ID</label>
                     <input
                       type="text"
-                      placeholder="e.g. Leads, JunePromo"
-                      value={selectedSegment}
-                      onChange={(e) => setSelectedSegment(e.target.value)}
+                      placeholder="e.g. uuid-of-segment"
+                      value={selectedSegmentId}
+                      onChange={(e) => setSelectedSegmentId(e.target.value)}
                       className="w-full px-3.5 py-2.5 bg-white/5 border border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary text-sm text-white"
                     />
                   </div>
@@ -486,7 +544,7 @@ export default function Campaigns() {
             <div className="flex items-center justify-between border-t border-white/5 pt-4 mt-6">
               <button
                 type="button"
-                disabled={step === 1}
+                disabled={step === 1 || submitting}
                 onClick={() => setStep(step - 1)}
                 className="px-4 py-2 text-xs font-semibold rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 disabled:opacity-40"
               >
@@ -504,10 +562,11 @@ export default function Campaigns() {
               ) : (
                 <button
                   type="button"
+                  disabled={submitting}
                   onClick={handleLaunchCampaign}
-                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-primary text-primary-foreground hover:bg-primary/95 flex items-center gap-1.5"
+                  className="px-4 py-2 text-xs font-semibold rounded-xl bg-primary text-primary-foreground hover:bg-primary/95 flex items-center gap-1.5 disabled:opacity-50"
                 >
-                  Launch Broadcast
+                  {submitting ? <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" /> : "Launch Broadcast"}
                 </button>
               )}
             </div>
