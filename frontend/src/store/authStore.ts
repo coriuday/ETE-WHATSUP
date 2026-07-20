@@ -1,10 +1,13 @@
 import { create } from "zustand";
 import Cookies from "js-cookie";
 import { User, Organization } from "@/types";
+import { setActiveOrgId, getActiveOrgId } from "@/lib/api";
+import { fetchMe, listOrganizations } from "@/lib/api";
 
 interface AuthState {
   user: User | null;
   organization: Organization | null;
+  activeOrgId: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   hasOrganization: boolean;
@@ -15,25 +18,42 @@ interface AuthState {
   initialize: () => Promise<void>;
 }
 
-export const useAuthStore = create<AuthState>((set, get) => ({
+export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   organization: null,
+  activeOrgId: getActiveOrgId(),
   isAuthenticated: false,
   isLoading: true,
   hasOrganization: false,
 
   setUser: (user) => set({ user, isAuthenticated: !!user }),
-  setOrganization: (organization) => set({ organization, hasOrganization: !!organization }),
+
+  setOrganization: (organization) => {
+    const id = organization?.id ?? null;
+    setActiveOrgId(id);
+    set({
+      organization,
+      activeOrgId: id,
+      hasOrganization: !!organization,
+    });
+  },
 
   setTokens: (accessToken, refreshToken) => {
-    Cookies.set("access_token", accessToken, { expires: 1 / 96 }); // 15 mins
-    Cookies.set("refresh_token", refreshToken, { expires: 30 }); // 30 days
+    Cookies.set("access_token", accessToken, { expires: 1 / 96 });
+    Cookies.set("refresh_token", refreshToken, { expires: 30 });
   },
 
   logout: () => {
     Cookies.remove("access_token");
     Cookies.remove("refresh_token");
-    set({ user: null, organization: null, isAuthenticated: false, hasOrganization: false });
+    setActiveOrgId(null);
+    set({
+      user: null,
+      organization: null,
+      activeOrgId: null,
+      isAuthenticated: false,
+      hasOrganization: false,
+    });
     if (typeof window !== "undefined") {
       window.location.href = "/login";
     }
@@ -43,21 +63,25 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ isLoading: true });
     const accessToken = Cookies.get("access_token");
     if (!accessToken) {
-      set({ isLoading: false, isAuthenticated: false, user: null, hasOrganization: false });
+      set({
+        isLoading: false,
+        isAuthenticated: false,
+        user: null,
+        hasOrganization: false,
+      });
       return;
     }
 
     try {
-      const { api } = await import("@/lib/api");
-      const userRes = await api.get("/auth/me");
-      const user: User = userRes.data.data.user;
-
+      const user = await fetchMe();
       let organization: Organization | null = null;
       try {
-        const orgRes = await api.get("/organizations");
-        const orgs: Organization[] = orgRes.data.data.organizations || [];
-        if (orgs.length > 0) {
-          organization = orgs[0];
+        const orgs = await listOrganizations();
+        const savedId = getActiveOrgId();
+        organization =
+          orgs.find((o) => o.id === savedId) || orgs[0] || null;
+        if (organization) {
+          setActiveOrgId(organization.id);
         }
       } catch (e) {
         console.error("Failed to load organizations", e);
@@ -66,6 +90,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({
         user,
         organization,
+        activeOrgId: organization?.id ?? null,
         isAuthenticated: true,
         hasOrganization: !!organization,
         isLoading: false,
@@ -74,7 +99,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       console.error("Failed to initialize auth state", error);
       Cookies.remove("access_token");
       Cookies.remove("refresh_token");
-      set({ user: null, organization: null, isAuthenticated: false, hasOrganization: false, isLoading: false });
+      setActiveOrgId(null);
+      set({
+        user: null,
+        organization: null,
+        activeOrgId: null,
+        isAuthenticated: false,
+        hasOrganization: false,
+        isLoading: false,
+      });
     }
   },
 }));

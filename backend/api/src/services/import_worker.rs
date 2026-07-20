@@ -222,6 +222,38 @@ fn extract_s3_key(url: &str, bucket: &str) -> Option<String> {
     url.find(&needle).map(|pos| url[pos + needle.len()..].to_string())
 }
 
+fn apply_header_field(row: &mut ImportRow, header: &str, field: &str) {
+    match header {
+        "phone" | "phone_number" | "mobile" | "mobile_number" | "number" => {
+            row.phone_number = field.to_string();
+        }
+        "first_name" | "firstname" | "first" => {
+            row.first_name = Some(field.to_string());
+        }
+        "last_name" | "lastname" | "last" | "surname" => {
+            row.last_name = Some(field.to_string());
+        }
+        "name" | "full_name" | "fullname" => {
+            let parts: Vec<&str> = field.splitn(2, ' ').collect();
+            row.first_name = Some(parts[0].to_string());
+            if parts.len() > 1 {
+                row.last_name = Some(parts[1].to_string());
+            }
+        }
+        "email" | "email_address" => {
+            row.email = Some(field.to_string());
+        }
+        "tags" | "tag" | "labels" => {
+            row.tags = field
+                .split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect();
+        }
+        _ => {}
+    }
+}
+
 // ── CSV Parsing ──────────────────────────────────────────────────────────────
 
 fn parse_csv(data: &[u8]) -> Result<Vec<ImportRow>> {
@@ -237,7 +269,6 @@ fn parse_csv(data: &[u8]) -> Result<Vec<ImportRow>> {
         .context("Failed to read CSV headers")?
         .clone();
 
-    // Normalize header names
     let headers: Vec<String> = headers
         .iter()
         .map(|h| h.trim().to_lowercase().replace(' ', "_"))
@@ -255,35 +286,7 @@ fn parse_csv(data: &[u8]) -> Result<Vec<ImportRow>> {
                 continue;
             }
             let header = headers.get(i).map(|s| s.as_str()).unwrap_or("");
-            match header {
-                "phone" | "phone_number" | "mobile" | "mobile_number" | "number" => {
-                    row.phone_number = field.to_string();
-                }
-                "first_name" | "firstname" | "first" => {
-                    row.first_name = Some(field.to_string());
-                }
-                "last_name" | "lastname" | "last" | "surname" => {
-                    row.last_name = Some(field.to_string());
-                }
-                "name" | "full_name" | "fullname" => {
-                    let parts: Vec<&str> = field.splitn(2, ' ').collect();
-                    row.first_name = Some(parts[0].to_string());
-                    if parts.len() > 1 {
-                        row.last_name = Some(parts[1].to_string());
-                    }
-                }
-                "email" | "email_address" => {
-                    row.email = Some(field.to_string());
-                }
-                "tags" | "tag" | "labels" => {
-                    row.tags = field
-                        .split(',')
-                        .map(|t| t.trim().to_string())
-                        .filter(|t| !t.is_empty())
-                        .collect();
-                }
-                _ => {}
-            }
+            apply_header_field(&mut row, header, field);
         }
 
         if !row.phone_number.is_empty() {
@@ -301,8 +304,8 @@ fn parse_xlsx(data: &[u8]) -> Result<Vec<ImportRow>> {
     use std::io::Cursor;
 
     let cursor = Cursor::new(data.to_vec());
-    let mut workbook: Xlsx<_> = open_workbook_from_rs(cursor)
-        .context("Failed to open XLSX file")?;
+    let mut workbook: Xlsx<_> =
+        open_workbook_from_rs(cursor).context("Failed to open XLSX file")?;
 
     let sheet_names = workbook.sheet_names().to_vec();
     let sheet_name = sheet_names
@@ -316,7 +319,6 @@ fn parse_xlsx(data: &[u8]) -> Result<Vec<ImportRow>> {
 
     let mut rows_iter = range.rows();
 
-    // First row = headers
     let header_row = match rows_iter.next() {
         Some(r) => r,
         None => return Ok(vec![]),
@@ -324,12 +326,7 @@ fn parse_xlsx(data: &[u8]) -> Result<Vec<ImportRow>> {
 
     let headers: Vec<String> = header_row
         .iter()
-        .map(|c| {
-            c.to_string()
-                .trim()
-                .to_lowercase()
-                .replace(' ', "_")
-        })
+        .map(|c| c.to_string().trim().to_lowercase().replace(' ', "_"))
         .collect();
 
     let mut rows = Vec::new();
@@ -344,35 +341,7 @@ fn parse_xlsx(data: &[u8]) -> Result<Vec<ImportRow>> {
                 continue;
             }
             let header = headers.get(i).map(|s| s.as_str()).unwrap_or("");
-            match header {
-                "phone" | "phone_number" | "mobile" | "mobile_number" | "number" => {
-                    row.phone_number = field.to_string();
-                }
-                "first_name" | "firstname" | "first" => {
-                    row.first_name = Some(field.to_string());
-                }
-                "last_name" | "lastname" | "last" | "surname" => {
-                    row.last_name = Some(field.to_string());
-                }
-                "name" | "full_name" | "fullname" => {
-                    let parts: Vec<&str> = field.splitn(2, ' ').collect();
-                    row.first_name = Some(parts[0].to_string());
-                    if parts.len() > 1 {
-                        row.last_name = Some(parts[1].to_string());
-                    }
-                }
-                "email" | "email_address" => {
-                    row.email = Some(field.to_string());
-                }
-                "tags" | "tag" | "labels" => {
-                    row.tags = field
-                        .split(',')
-                        .map(|t| t.trim().to_string())
-                        .filter(|t| !t.is_empty())
-                        .collect();
-                }
-                _ => {}
-            }
+            apply_header_field(&mut row, header, field);
         }
 
         if !row.phone_number.is_empty() {

@@ -11,9 +11,6 @@ use crate::{
     models::user::UserRole,
 };
 
-/// Guard that requires a minimum role level
-pub struct RequireRole(pub UserRole);
-
 impl UserRole {
     /// Returns the numeric rank of the role (higher = more permissions)
     pub fn rank(&self) -> u8 {
@@ -28,8 +25,6 @@ impl UserRole {
         self.rank() >= required.rank()
     }
 }
-
-/// Type-safe role guards as extractors
 
 /// Requires at least TeamMember (any authenticated user)
 pub struct RequireTeamMember(pub AuthUser);
@@ -89,9 +84,13 @@ macro_rules! impl_org_role_guard {
                 state: &S,
             ) -> Result<Self, Self::Rejection> {
                 let user = AuthUser::from_request_parts(parts, state).await?;
-                // SuperAdmin has full bypass
                 if user.role == UserRole::SuperAdmin {
                     return Ok(Self(user));
+                }
+                if user.org_id.is_none() {
+                    return Err(AppError::BadRequest(
+                        "X-Organization-Id header is required".into(),
+                    ));
                 }
                 if let Some(ref org_role) = user.org_role {
                     if org_role.has_permission(&$required_role) {

@@ -1,6 +1,4 @@
 use anyhow::Result;
-use aws_sdk_s3::{config::Credentials, Client, Config};
-use aws_config::Region;
 
 use crate::AppState;
 
@@ -13,23 +11,8 @@ impl<'a> StorageService<'a> {
         Self { state }
     }
 
-    fn build_client(&self) -> Client {
-        let creds = Credentials::new(
-            &self.state.config.s3_access_key,
-            &self.state.config.s3_secret_key,
-            None,
-            None,
-            "whatsup-static",
-        );
-
-        let config = Config::builder()
-            .credentials_provider(creds)
-            .region(Region::new(self.state.config.s3_region.clone()))
-            .endpoint_url(&self.state.config.s3_endpoint)
-            .force_path_style(self.state.config.s3_force_path_style)
-            .build();
-
-        Client::from_conf(config)
+    fn client(&self) -> &aws_sdk_s3::Client {
+        &self.state.s3
     }
 
     /// Upload raw bytes to S3/MinIO
@@ -39,9 +22,7 @@ impl<'a> StorageService<'a> {
         data: &[u8],
         content_type: &str,
     ) -> Result<String> {
-        let client = self.build_client();
-
-        client
+        self.client()
             .put_object()
             .bucket(&self.state.config.s3_bucket)
             .key(key)
@@ -65,8 +46,8 @@ impl<'a> StorageService<'a> {
         use aws_sdk_s3::presigning::PresigningConfig;
         use std::time::Duration;
 
-        let client = self.build_client();
-        let presigned = client
+        let presigned = self
+            .client()
             .get_object()
             .bucket(&self.state.config.s3_bucket)
             .key(key)
@@ -78,27 +59,21 @@ impl<'a> StorageService<'a> {
 
     /// Download an object's bytes by key
     pub async fn download_bytes(&self, key: &str) -> Result<bytes::Bytes> {
-        let client = self.build_client();
-        let output = client
+        let output = self
+            .client()
             .get_object()
             .bucket(&self.state.config.s3_bucket)
             .key(key)
             .send()
             .await?;
 
-        let data = output
-            .body
-            .collect()
-            .await
-            .map(|d| d.into_bytes())?;
-
+        let data = output.body.collect().await.map(|d| d.into_bytes())?;
         Ok(data)
     }
 
     /// Delete an object
     pub async fn delete(&self, key: &str) -> Result<()> {
-        let client = self.build_client();
-        client
+        self.client()
             .delete_object()
             .bucket(&self.state.config.s3_bucket)
             .key(key)

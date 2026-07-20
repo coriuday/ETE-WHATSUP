@@ -22,9 +22,15 @@ impl<'a> CampaignService<'a> {
         org_id: Uuid,
         query: CampaignListQuery,
     ) -> AppResult<serde_json::Value> {
+        use crate::models::pagination::{PaginatedResponse, PaginationQuery};
+
         let page = query.page.unwrap_or(1).max(1);
         let limit = query.limit.unwrap_or(20).min(100);
-        let offset = ((page - 1) * limit) as i64;
+        let pagination = PaginationQuery {
+            page: Some(page),
+            limit: Some(limit),
+        };
+        let offset = pagination.offset();
 
         let total: i64 = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM campaigns WHERE organization_id = $1 AND deleted_at IS NULL",
@@ -53,36 +59,32 @@ impl<'a> CampaignService<'a> {
         .await
         .map_err(AppError::Database)?;
 
-        let data: Vec<serde_json::Value> = campaigns.iter().map(|c| {
-            serde_json::json!({
-                "id": c.id,
-                "name": c.name,
-                "type": c.r#type,
-                "status": c.status,
-                "total_recipients": c.total_recipients,
-                "sent_count": c.sent_count,
-                "delivered_count": c.delivered_count,
-                "read_count": c.read_count,
-                "failed_count": c.failed_count,
-                "delivery_rate": if c.sent_count > 0 {
-                    (c.delivered_count as f64 / c.sent_count as f64) * 100.0
-                } else { 0.0 },
-                "scheduled_at": c.scheduled_at,
-                "started_at": c.started_at,
-                "completed_at": c.completed_at,
-                "created_at": c.created_at,
+        let data: Vec<serde_json::Value> = campaigns
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "id": c.id,
+                    "name": c.name,
+                    "type": c.r#type,
+                    "status": c.status,
+                    "total_recipients": c.total_recipients,
+                    "sent_count": c.sent_count,
+                    "delivered_count": c.delivered_count,
+                    "read_count": c.read_count,
+                    "failed_count": c.failed_count,
+                    "delivery_rate": if c.sent_count > 0 {
+                        (c.delivered_count as f64 / c.sent_count as f64) * 100.0
+                    } else { 0.0 },
+                    "scheduled_at": c.scheduled_at,
+                    "started_at": c.started_at,
+                    "completed_at": c.completed_at,
+                    "created_at": c.created_at,
+                })
             })
-        }).collect();
+            .collect();
 
-        Ok(serde_json::json!({
-            "data": data,
-            "pagination": {
-                "total": total,
-                "page": page,
-                "limit": limit,
-                "total_pages": ((total as f64) / (limit as f64)).ceil() as u32
-            }
-        }))
+        Ok(serde_json::to_value(PaginatedResponse::new(data, total, &pagination))
+            .unwrap_or_default())
     }
 
     pub async fn create_campaign(
@@ -305,39 +307,41 @@ impl<'a> CampaignService<'a> {
             (None, None)
         };
 
-        // Bulk-insert message_queue_jobs (chunked to avoid huge queries)
+        // Bulk-insert message_queue_jobs via UNNEST batches
         const CHUNK: usize = 500;
         for chunk in recipients.chunks(CHUNK) {
-            for r in chunk {
-                let payload = serde_json::json!({
-                    "org_id": org_id,
-                    "message_body": message_body,
-                    "template_name": template_name,
-                    "language": language.as_deref().unwrap_or("en_US"),
-                    "components": [],
-                });
+            let contact_ids: Vec<Uuid> = chunk.iter().map(|r| r.contact_id).collect();
+            let payloads: Vec<String> = chunk
+                .iter()
+                .map(|_| {
+                    serde_json::json!({
+                        "org_id": org_id,
+                        "message_body": message_body,
+                        "template_name": template_name,
+                        "language": language.as_deref().unwrap_or("en_US"),
+                        "components": [],
+                    })
+                    .to_string()
+                })
+                .collect();
 
-                let _ = sqlx::query!(
-                    r#"
-                    INSERT INTO message_queue_jobs
-                        (campaign_id, contact_id, payload, status)
-                    VALUES ($1, $2, $3, 'pending')
-                    "#,
-                    id,
-                    r.contact_id,
-                    payload
-                )
-                .execute(&self.state.db)
-                .await
-                .map_err(AppError::Database)?;
-            }
+            sqlx::query(
+                r#"
+                INSERT INTO message_queue_jobs (campaign_id, contact_id, payload, status)
+                SELECT $1, u.contact_id, u.payload::jsonb, 'pending'
+                FROM UNNEST($2::uuid[], $3::text[]) AS u(contact_id, payload)
+                "#,
+            )
+            .bind(id)
+            .bind(&contact_ids)
+            .bind(&payloads)
+            .execute(&self.state.db)
+            .await
+            .map_err(AppError::Database)?;
         }
 
         // Spawn worker pool
-        let state_clone = self.state.clone();
-        tokio::spawn(async move {
-            crate::services::worker::start_campaign_worker(state_clone, id).await;
-        });
+        crate::services::worker::spawn_campaign_worker(self.state.clone(), id);
 
         // Audit log
         crate::services::audit_service::audit_log(
@@ -388,13 +392,20 @@ impl<'a> CampaignService<'a> {
     }
 
     pub async fn resume_campaign(&self, org_id: Uuid, id: Uuid) -> AppResult<serde_json::Value> {
-        sqlx::query!(
-            "UPDATE campaigns SET status = 'running' WHERE id = $1 AND organization_id = $2 AND status = 'paused'",
-            id, org_id
+        let result = sqlx::query_scalar::<_, Uuid>(
+            "UPDATE campaigns SET status = 'running' WHERE id = $1 AND organization_id = $2 AND status = 'paused' RETURNING id",
         )
-        .execute(&self.state.db)
+        .bind(id)
+        .bind(org_id)
+        .fetch_optional(&self.state.db)
         .await
         .map_err(AppError::Database)?;
+
+        if result.is_none() {
+            return Err(AppError::InvalidCampaignState);
+        }
+
+        crate::services::worker::spawn_campaign_worker(self.state.clone(), id);
         self.get_campaign(org_id, id).await
     }
 

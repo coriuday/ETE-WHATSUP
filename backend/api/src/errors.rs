@@ -143,9 +143,13 @@ impl IntoResponse for AppError {
         let code = self.error_code().to_string();
         let message = self.to_string();
 
-        // Don't leak internal error details in production
         let message = match &self {
-            AppError::Database(_) | AppError::Internal(_) => {
+            AppError::Database(e) => {
+                tracing::error!(error = %e, "Database error");
+                "An internal error occurred".to_string()
+            }
+            AppError::Internal(e) => {
+                tracing::error!(error = %e, "Internal error");
                 "An internal error occurred".to_string()
             }
             _ => message,

@@ -3,9 +3,10 @@
 A multi-tenant, secure, high-performance SaaS platform built to handle high-volume WhatsApp broadcasting, real-time customer communications, automated follow-up sequences, and detailed campaign delivery funnels.
 
 ## 🚀 Technology Stack
-*   **Frontend**: Next.js 15, TypeScript, Tailwind CSS, Zustand, TanStack Query, Recharts, Framer Motion
-*   **Backend**: Rust, Axum, SQLx (PostgreSQL), Redis (Cache & Queue), JWT + RBAC, Lettre (SMTP client)
-*   **Database**: Supabase PostgreSQL
+*   **Frontend**: Next.js 15, TypeScript, Tailwind CSS, Zustand, TanStack Query, Recharts
+*   **Backend**: Rust, Axum, SQLx (PostgreSQL), Redis (rate limit + auth cache), JWT + RBAC, Lettre (SMTP)
+*   **Database**: PostgreSQL (Docker Compose locally; Supabase compatible)
+*   **Job queue**: Postgres `message_queue_jobs` (in-process workers)
 *   **Automation**: self-hosted n8n
 *   **Storage**: S3-Compatible Storage (MinIO locally, AWS S3 / Cloudflare R2 in production)
 *   **Proxying**: Nginx Reverse Proxy
@@ -17,17 +18,24 @@ A multi-tenant, secure, high-performance SaaS platform built to handle high-volu
 ```
 ete_whatsup/
 ├── backend/
-│   └── api/                # Axum REST API in Rust
+│   └── api/                # Axum REST API in Rust (lib + binary)
 ├── frontend/               # Next.js 15 Dashboard & Auth
 ├── db/
-│   └── migrations/         # Database migrations (001 - 010)
+│   └── migrations/         # Database migrations (001 – 015)
 ├── infrastructure/
 │   ├── nginx/              # Nginx reverse proxy configuration
 │   ├── redis/              # Redis server configuration
 │   └── n8n/                # n8n automations configuration
-└── docker-compose.yml      # Local dev multi-container stack
+└── docker-compose.yml      # Local stack (API, frontend, postgres, redis, minio, n8n, nginx)
 ```
 
+---
+
+## Multi-tenant API notes
+* Org-scoped routes require header `X-Organization-Id` (UUID of the active organization).
+* Users with a single membership may omit the header (fallback); multi-org users must send it.
+* Health: `GET /api/v1/health/live` (liveness), `GET /api/v1/health/ready` (DB + Redis).
+* Migrations are applied externally (Compose init / ops) — not auto-run on API boot.
 ---
 
 ## 🛠️ Local Development Setup
@@ -50,7 +58,7 @@ Copy the environment template files and fill in values (such as your Supabase da
     ```
 
 ### Step 2: Launch Docker Compose Services
-Start the caching, storage, proxy, and automation containers:
+Start postgres, caching, storage, proxy, and automation containers:
 ```bash
 docker compose up -d
 ```
@@ -58,14 +66,17 @@ This boots up:
 *   **Nginx Proxy** on `http://localhost:80`
 *   **Next.js Frontend** on `http://localhost:3000`
 *   **Axum Backend API** on `http://localhost:8080`
+*   **PostgreSQL** (Compose service)
 *   **n8n Workflow Editor** on `http://localhost:5678`
 *   **MinIO Console** on `http://localhost:9001`
-*   **Redis Cache** on `http://localhost:6379`
+*   **Redis** on `http://localhost:6379` (rate limiting + auth session cache — not the message job queue)
 
 ### Step 3: Run Database Migrations
-Make sure `DATABASE_URL` in `backend/api/.env` is set to your Supabase PostgreSQL database connection, then apply SQL files in order:
-```sql
--- Apply db/migrations/*.sql on your Supabase Postgres Editor or via CLI
+Apply SQL files in order (`db/migrations/001` … `015`) against your Postgres database:
+```bash
+# Example with psql against Compose postgres
+psql "$DATABASE_URL" -f db/migrations/001_....sql
+# … through 015_phase1_stabilization.sql
 ```
 
 ---

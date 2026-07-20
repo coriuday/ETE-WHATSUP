@@ -122,9 +122,57 @@ async fn create_schedule(
     ))
 }
 
-async fn get_schedule(State(state): State<AppState>, RequireOrgViewer(auth): RequireOrgViewer, Path(id): Path<Uuid>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
-    let _org_id = auth.org_id.ok_or(AppError::Forbidden)?;
-    Ok(Json(ApiResponse::ok(serde_json::json!({ "id": id }))))
+async fn get_schedule(
+    State(state): State<AppState>,
+    RequireOrgViewer(auth): RequireOrgViewer,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            Uuid,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            i32,
+            Option<i32>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            Option<chrono::DateTime<chrono::Utc>>,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
+        r#"
+        SELECT id, campaign_id, organization_id, frequency::text, cron_expression,
+               status::text, run_count, max_runs, next_run_at, last_run_at, ends_at, created_at
+        FROM campaign_schedules
+        WHERE id = $1 AND organization_id = $2
+        "#,
+    )
+    .bind(id)
+    .bind(org_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound("Schedule".into()))?;
+
+    Ok(Json(ApiResponse::ok(serde_json::json!({
+        "id": row.0,
+        "campaign_id": row.1,
+        "organization_id": row.2,
+        "frequency": row.3,
+        "cron_expression": row.4,
+        "status": row.5,
+        "run_count": row.6,
+        "max_runs": row.7,
+        "next_run_at": row.8,
+        "last_run_at": row.9,
+        "ends_at": row.10,
+        "created_at": row.11,
+    }))))
 }
 
 async fn delete_schedule(State(state): State<AppState>, RequireOrgAdmin(auth): RequireOrgAdmin, Path(id): Path<Uuid>) -> AppResult<Json<ApiResponse<()>>> {

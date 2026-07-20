@@ -77,7 +77,7 @@ export default function Onboarding() {
           </div>
           <h2 className="text-2xl font-bold tracking-tight">Set up your organization</h2>
           <p className="text-muted-foreground text-sm mt-1">
-            {user ? `Welcome, ${user.full_name}!` : "One last step before you start broadcasting"}
+            {user ? `Welcome, ${user.fullName}!` : "One last step before you start broadcasting"}
           </p>
         </div>
 

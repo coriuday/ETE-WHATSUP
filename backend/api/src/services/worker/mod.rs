@@ -13,15 +13,78 @@ use crate::{
     AppState,
 };
 
-// ── Retry delays ─────────────────────────────────────────────────────────────
+const RETRY_DELAYS_SECS: [i64; 3] = [60, 300, 900];
 
-const RETRY_DELAYS_SECS: [i64; 3] = [60, 300, 900]; // 1 min, 5 min, 15 min
+/// Spawn a campaign worker task (used by launch, resume, and crash recovery).
+pub fn spawn_campaign_worker(state: AppState, campaign_id: Uuid) {
+    tokio::spawn(async move {
+        start_campaign_worker(state, campaign_id).await;
+    });
+}
 
-// ── Entry point ──────────────────────────────────────────────────────────────
+/// On API startup: resume workers for campaigns still marked running.
+pub async fn recover_running_campaigns(state: AppState) {
+    let rows = sqlx::query_as::<_, (Uuid,)>(
+        r#"
+        SELECT id FROM campaigns
+        WHERE status = 'running'
+          AND deleted_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM message_queue_jobs j
+            WHERE j.campaign_id = campaigns.id
+              AND j.status IN ('pending', 'processing', 'retry')
+          )
+        "#,
+    )
+    .fetch_all(&state.db)
+    .await;
 
-/// Launch the campaign worker for a specific campaign.
-/// Spawns a bounded pool of async tasks that pull jobs from
-/// `message_queue_jobs` and dispatch WhatsApp messages.
+    match rows {
+        Ok(rows) => {
+            tracing::info!("Recovering {} running campaign worker(s)", rows.len());
+            for (id,) in rows {
+                spawn_campaign_worker(state.clone(), id);
+            }
+        }
+        Err(e) => tracing::error!("Failed to recover running campaigns: {:?}", e),
+    }
+}
+
+/// Periodically reclaim jobs stuck in `processing` after a crash.
+pub async fn run_job_reclaimer(state: AppState) {
+    let mins = state.config.job_reclaim_minutes.max(1);
+    tracing::info!("Job reclaimer started (timeout={}m)", mins);
+
+    loop {
+        if let Err(e) = reclaim_stuck_jobs(&state, mins).await {
+            tracing::error!("Job reclaim error: {:?}", e);
+        }
+        sleep(Duration::from_secs(60)).await;
+    }
+}
+
+async fn reclaim_stuck_jobs(state: &AppState, mins: u64) -> anyhow::Result<()> {
+    let mins_i64 = mins as i64;
+    let result = sqlx::query(
+        r#"
+        UPDATE message_queue_jobs
+        SET status = 'retry',
+            retry_at = NOW(),
+            error = COALESCE(error, 'Reclaimed after stuck processing')
+        WHERE status = 'processing'
+          AND updated_at < NOW() - ($1 * INTERVAL '1 minute')
+        "#,
+    )
+    .bind(mins_i64)
+    .execute(&state.db)
+    .await?;
+
+    if result.rows_affected() > 0 {
+        tracing::warn!("Reclaimed {} stuck processing job(s)", result.rows_affected());
+    }
+    Ok(())
+}
+
 pub async fn start_campaign_worker(state: AppState, campaign_id: Uuid) {
     let concurrency = state.config.wa_messages_per_second.max(1) as usize;
     tracing::info!(
@@ -30,11 +93,21 @@ pub async fn start_campaign_worker(state: AppState, campaign_id: Uuid) {
         concurrency
     );
 
-    // Use a semaphore to cap concurrency
+    let wa_creds = match load_wa_credentials(&state, campaign_id).await {
+        Ok(c) => Arc::new(c),
+        Err(e) => {
+            tracing::error!(
+                "Cannot start worker for campaign {}: failed to load WA credentials: {:?}",
+                campaign_id,
+                e
+            );
+            return;
+        }
+    };
+
     let semaphore = Arc::new(tokio::sync::Semaphore::new(concurrency));
 
     loop {
-        // Check if campaign is still running
         let status = sqlx::query_scalar!(
             "SELECT status::text FROM campaigns WHERE id = $1",
             campaign_id
@@ -50,7 +123,6 @@ pub async fn start_campaign_worker(state: AppState, campaign_id: Uuid) {
             }
         }
 
-        // Pull next pending job
         let job = sqlx::query!(
             r#"
             UPDATE message_queue_jobs
@@ -73,12 +145,14 @@ pub async fn start_campaign_worker(state: AppState, campaign_id: Uuid) {
         match job {
             Ok(Some(job)) => {
                 let state_clone = state.clone();
+                let wa_creds = wa_creds.clone();
                 let permit = semaphore.clone().acquire_owned().await.unwrap();
 
                 tokio::spawn(async move {
                     let _permit = permit;
                     process_job(
                         &state_clone,
+                        &wa_creds,
                         job.id,
                         campaign_id,
                         job.contact_id,
@@ -90,13 +164,11 @@ pub async fn start_campaign_worker(state: AppState, campaign_id: Uuid) {
                 });
             }
             Ok(None) => {
-                // No pending jobs — check if campaign is complete
                 let all_done = check_campaign_complete(&state, campaign_id).await;
                 if all_done {
                     complete_campaign(&state, campaign_id).await;
                     break;
                 }
-                // Wait before polling again
                 sleep(Duration::from_secs(2)).await;
             }
             Err(e) => {
@@ -105,7 +177,6 @@ pub async fn start_campaign_worker(state: AppState, campaign_id: Uuid) {
             }
         }
 
-        // Throttle: respect wa_messages_per_second
         sleep(Duration::from_millis(
             1000 / state.config.wa_messages_per_second.max(1),
         ))
@@ -115,10 +186,43 @@ pub async fn start_campaign_worker(state: AppState, campaign_id: Uuid) {
     tracing::info!("Campaign worker finished for campaign {}", campaign_id);
 }
 
-// ── Job processor ────────────────────────────────────────────────────────────
+struct WaCredentials {
+    wa_account_id: Uuid,
+    phone_number_id: String,
+    access_token: String,
+}
+
+async fn load_wa_credentials(state: &AppState, campaign_id: Uuid) -> anyhow::Result<WaCredentials> {
+    let wa = sqlx::query!(
+        r#"
+        SELECT wa.id, wa.phone_number_id, wa.access_token_enc
+        FROM whatsapp_accounts wa
+        JOIN campaigns c ON c.wa_account_id = wa.id
+        WHERE c.id = $1
+        "#,
+        campaign_id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| anyhow::anyhow!("No WhatsApp account linked to campaign"))?;
+
+    let access_token = match wa.access_token_enc {
+        Some(enc) => {
+            crate::utils::encryption::decrypt(&enc, &state.config.encryption_key).unwrap_or_default()
+        }
+        None => String::new(),
+    };
+
+    Ok(WaCredentials {
+        wa_account_id: wa.id,
+        phone_number_id: wa.phone_number_id.unwrap_or_default(),
+        access_token,
+    })
+}
 
 async fn process_job(
     state: &AppState,
+    wa_creds: &WaCredentials,
     job_id: Uuid,
     campaign_id: Uuid,
     contact_id: Uuid,
@@ -126,11 +230,10 @@ async fn process_job(
     attempts: i32,
     max_attempts: i32,
 ) {
-    let result = dispatch_message(state, campaign_id, contact_id, &payload).await;
+    let result = dispatch_message(state, wa_creds, campaign_id, contact_id, &payload).await;
 
     match result {
         Ok(wa_message_id) => {
-            // Mark job sent
             let _ = sqlx::query!(
                 r#"
                 UPDATE message_queue_jobs
@@ -142,7 +245,6 @@ async fn process_job(
             .execute(&state.db)
             .await;
 
-            // Update campaign sent count
             let _ = sqlx::query!(
                 "UPDATE campaigns SET sent_count = sent_count + 1 WHERE id = $1",
                 campaign_id
@@ -160,7 +262,6 @@ async fn process_job(
             let next_attempt = attempts + 1;
 
             if next_attempt >= max_attempts {
-                // Permanently failed
                 let _ = sqlx::query!(
                     r#"
                     UPDATE message_queue_jobs
@@ -183,14 +284,12 @@ async fn process_job(
 
                 tracing::warn!("Job {} permanently failed: {}", job_id, e);
             } else {
-                // Schedule retry with backoff
                 let delay_secs = RETRY_DELAYS_SECS
                     .get(next_attempt as usize - 1)
                     .copied()
                     .unwrap_or(900);
 
-                let retry_at = Utc::now()
-                    + chrono::Duration::seconds(delay_secs);
+                let retry_at = Utc::now() + chrono::Duration::seconds(delay_secs);
 
                 let _ = sqlx::query!(
                     r#"
@@ -215,29 +314,13 @@ async fn process_job(
     }
 }
 
-// ── WhatsApp dispatch ────────────────────────────────────────────────────────
-
 async fn dispatch_message(
     state: &AppState,
+    wa_creds: &WaCredentials,
     campaign_id: Uuid,
     contact_id: Uuid,
     payload: &serde_json::Value,
 ) -> anyhow::Result<Option<String>> {
-    // Load WA account credentials
-    let wa = sqlx::query!(
-        r#"
-        SELECT wa.id, wa.phone_number_id, wa.access_token_enc
-        FROM whatsapp_accounts wa
-        JOIN campaigns c ON c.wa_account_id = wa.id
-        WHERE c.id = $1
-        "#,
-        campaign_id
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| anyhow::anyhow!("No WhatsApp account linked to campaign"))?;
-
-    // Load contact phone
     let contact = sqlx::query!(
         "SELECT phone_number, first_name FROM contacts WHERE id = $1",
         contact_id
@@ -253,16 +336,7 @@ async fn dispatch_message(
 
     let wa_service = WhatsAppService::new(state);
 
-    let access_token = match wa.access_token_enc {
-        Some(enc) => {
-            let key = &state.config.encryption_key;
-            crate::utils::encryption::decrypt(&enc, key).unwrap_or_default()
-        }
-        None => String::new(),
-    };
-
     let send_result = if let Some(template_name) = payload["template_name"].as_str() {
-        // Template message
         let language = payload["language"].as_str().unwrap_or("en_US");
         let components = payload["components"]
             .as_array()
@@ -271,8 +345,8 @@ async fn dispatch_message(
 
         wa_service
             .send_template(
-                wa.phone_number_id.as_deref().unwrap_or_default(),
-                &access_token,
+                &wa_creds.phone_number_id,
+                &wa_creds.access_token,
                 &contact.phone_number,
                 template_name,
                 language,
@@ -280,15 +354,14 @@ async fn dispatch_message(
             )
             .await
     } else {
-        // Text message
         let body = payload["message_body"]
             .as_str()
             .unwrap_or("Hello from WhatsUp!");
 
         wa_service
             .send_text(
-                wa.phone_number_id.as_deref().unwrap_or_default(),
-                &access_token,
+                &wa_creds.phone_number_id,
+                &wa_creds.access_token,
                 &contact.phone_number,
                 body,
             )
@@ -298,29 +371,28 @@ async fn dispatch_message(
     let response = send_result?;
     let wa_message_id = response.messages.first().map(|m| m.id.clone());
 
-    // Persist message record
-    let _ = sqlx::query!(
+    let _ = sqlx::query(
         r#"
         INSERT INTO messages (
             organization_id, wa_account_id, campaign_id, contact_id,
             wa_message_id, direction, type, body, status
         )
-        VALUES ($1, $2, $3, $4, $5, 'outbound', 'text', $6, 'sent')
+        SELECT $1, $2, $3, $4, $5, 'outbound', 'text', $6, 'sent'
+        WHERE $5::text IS NULL
+           OR NOT EXISTS (SELECT 1 FROM messages WHERE wa_message_id = $5)
         "#,
-        org_id,
-        wa.id,
-        campaign_id,
-        contact_id,
-        wa_message_id.as_deref(),
-        payload["message_body"].as_str().unwrap_or("")
     )
+    .bind(org_id)
+    .bind(wa_creds.wa_account_id)
+    .bind(campaign_id)
+    .bind(contact_id)
+    .bind(wa_message_id.as_deref())
+    .bind(payload["message_body"].as_str().unwrap_or(""))
     .execute(&state.db)
     .await;
 
     Ok(wa_message_id)
 }
-
-// ── Completion check ─────────────────────────────────────────────────────────
 
 async fn check_campaign_complete(state: &AppState, campaign_id: Uuid) -> bool {
     let pending = sqlx::query_scalar!(
@@ -364,5 +436,14 @@ async fn complete_campaign(state: &AppState, campaign_id: Uuid) {
         Err(e) => {
             tracing::error!("Failed to mark campaign {} as completed: {:?}", campaign_id, e);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn retry_delays_are_ordered() {
+        assert!(super::RETRY_DELAYS_SECS[0] < super::RETRY_DELAYS_SECS[1]);
+        assert!(super::RETRY_DELAYS_SECS[1] < super::RETRY_DELAYS_SECS[2]);
     }
 }

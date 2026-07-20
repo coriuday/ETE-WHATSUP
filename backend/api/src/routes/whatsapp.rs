@@ -88,7 +88,42 @@ async fn update_profile(State(state): State<AppState>, RequireOrgAdmin(auth): Re
     Ok(Json(ApiResponse::with_message(serde_json::json!({}), "Profile updated")))
 }
 
-async fn sync_account(State(state): State<AppState>, RequireOrgAdmin(auth): RequireOrgAdmin, Path(id): Path<Uuid>) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
-    let _org_id = auth.org_id.ok_or(AppError::Forbidden)?;
-    Ok(Json(ApiResponse::with_message(serde_json::json!({}), "Account synced with Meta")))
+async fn sync_account(
+    State(state): State<AppState>,
+    RequireOrgAdmin(auth): RequireOrgAdmin,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
+
+    let account = sqlx::query_as::<_, (Uuid, Option<String>, Option<String>, String, Option<String>)>(
+        r#"
+        SELECT id, phone_number_id, access_token_enc, phone_number, business_name
+        FROM whatsapp_accounts
+        WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL
+        "#,
+    )
+    .bind(id)
+    .bind(org_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(AppError::Database)?
+    .ok_or_else(|| AppError::NotFound("WhatsApp account".into()))?;
+
+    sqlx::query(
+        "UPDATE whatsapp_accounts SET updated_at = NOW() WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(id)
+    .bind(org_id)
+    .execute(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(Json(ApiResponse::ok(serde_json::json!({
+        "id": account.0,
+        "phone_number_id": account.1,
+        "phone_number": account.3,
+        "business_name": account.4,
+        "synced_at": chrono::Utc::now(),
+        "has_credentials": account.2.is_some(),
+    }))))
 }

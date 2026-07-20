@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -60,13 +60,31 @@ pub struct Config {
     // Rate limiting
     pub rate_limit_requests_per_min: u64,
     pub rate_limit_burst: u64,
+    #[serde(default = "default_auth_rate_limit")]
+    pub rate_limit_auth_per_min: u64,
+    #[serde(default = "default_webhook_rate_limit")]
+    pub rate_limit_webhook_per_min: u64,
 
     // WhatsApp throttle
     pub wa_messages_per_minute: u64,
     pub wa_messages_per_second: u64,
 
+    // Worker
+    #[serde(default = "default_job_reclaim_mins")]
+    pub job_reclaim_minutes: u64,
+
     // CORS
     pub allowed_origins: String,
+}
+
+fn default_auth_rate_limit() -> u64 {
+    5
+}
+fn default_webhook_rate_limit() -> u64 {
+    1000
+}
+fn default_job_reclaim_mins() -> u64 {
+    10
 }
 
 impl Config {
@@ -86,10 +104,13 @@ impl Config {
             .set_default("jwt_refresh_expires_secs", 2592000)?
             .set_default("s3_force_path_style", true)?
             .set_default("smtp_port", 587)?
-            .set_default("rate_limit_requests_per_min", 100)?
+            .set_default("rate_limit_requests_per_min", 300)?
             .set_default("rate_limit_burst", 20)?
+            .set_default("rate_limit_auth_per_min", 5)?
+            .set_default("rate_limit_webhook_per_min", 1000)?
             .set_default("wa_messages_per_minute", 60)?
             .set_default("wa_messages_per_second", 1)?
+            .set_default("job_reclaim_minutes", 10)?
             .set_default("meta_wa_app_secret", "")?
             .set_default("meta_api_version", "v19.0")?
             .set_default("meta_api_base_url", "https://graph.facebook.com")?
@@ -98,9 +119,64 @@ impl Config {
             .build()
             .context("Failed to build config")?;
 
-        config
+        let cfg: Self = config
             .try_deserialize()
-            .context("Failed to deserialize config")
+            .context("Failed to deserialize config")?;
+
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    /// Fail closed in production; warn in development for optional integrations.
+    pub fn validate(&self) -> Result<()> {
+        if self.database_url.is_empty() {
+            bail!("DATABASE_URL is required");
+        }
+        if self.redis_url.is_empty() {
+            bail!("REDIS_URL is required");
+        }
+
+        if self.is_production() {
+            if self.jwt_secret.len() < 32 {
+                bail!("JWT_SECRET must be at least 32 characters in production");
+            }
+            if self.jwt_refresh_secret.len() < 32 {
+                bail!("JWT_REFRESH_SECRET must be at least 32 characters in production");
+            }
+            if self.jwt_secret == self.jwt_refresh_secret {
+                bail!("JWT_SECRET and JWT_REFRESH_SECRET must be distinct in production");
+            }
+            if !is_valid_encryption_key(&self.encryption_key) {
+                bail!("ENCRYPTION_KEY must be a 64-char hex string (32 bytes) in production");
+            }
+            if self.meta_wa_verify_token.is_empty() {
+                bail!("META_WA_VERIFY_TOKEN is required in production");
+            }
+        } else {
+            if self.jwt_secret.len() < 16 {
+                tracing::warn!("JWT_SECRET is short; use >= 32 chars before production");
+            }
+            if self.jwt_secret == self.jwt_refresh_secret {
+                tracing::warn!("JWT_SECRET and JWT_REFRESH_SECRET should be distinct");
+            }
+            if !is_valid_encryption_key(&self.encryption_key) {
+                tracing::warn!(
+                    "ENCRYPTION_KEY should be 64-char hex (32 bytes); current length={}",
+                    self.encryption_key.len()
+                );
+            }
+            if self.meta_wa_token.is_empty() {
+                tracing::warn!("META_WA_TOKEN is empty — WhatsApp sends will fail");
+            }
+            if self.smtp_host.is_empty() {
+                tracing::warn!("SMTP_HOST is empty — email delivery disabled");
+            }
+            if self.s3_endpoint.is_empty() {
+                tracing::warn!("S3_ENDPOINT is empty — object storage disabled");
+            }
+        }
+
+        Ok(())
     }
 
     pub fn is_production(&self) -> bool {
@@ -121,4 +197,8 @@ impl Config {
     pub fn meta_api_url(&self) -> String {
         format!("{}/{}", self.meta_api_base_url, self.meta_api_version)
     }
+}
+
+fn is_valid_encryption_key(key: &str) -> bool {
+    key.len() == 64 && key.chars().all(|c| c.is_ascii_hexdigit())
 }

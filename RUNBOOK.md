@@ -49,4 +49,7 @@ npm run dev
 ## Troubleshooting
 - **Postgres Authentication Failed:** Ensure you don't have another local Postgres instance stealing the port. Our `docker-compose.yml` maps to port `5434` to avoid this.
 - **Frontend Hydration Error:** If you see `data-qb-installed`, it is caused by a browser extension (like Quillbot) injecting tags into the DOM. This warning is suppressed in `layout.tsx` and can be ignored.
-- **Can't Login after Registering:** Make sure your backend logic bypasses email verification during development, otherwise newly registered accounts get stuck in a `pending_verification` state.
+- **Can't Login after Registering:** New accounts are created as `pending_verification`. Verify email via the link (or set `email_verified` / status in DB for local testing). Login is blocked until verified.
+- **Org-scoped 400/403:** Send `X-Organization-Id` with the active organization UUID. The frontend stores this in `active_org_id` cookie after login.
+- **SQLx compile:** `cargo check` / `clippy` require `DATABASE_URL` pointing at a migrated Postgres (or a prepared `.sqlx` offline cache).
+- **Redis role:** Redis is for rate limits and short-lived auth cache — campaign jobs use Postgres `message_queue_jobs`.

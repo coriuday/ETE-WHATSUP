@@ -60,7 +60,10 @@ impl N8nEvent {
 
 impl<'a> N8nService<'a> {
     pub fn new(state: &'a AppState) -> Self {
-        Self { state, client: Client::new() }
+        Self {
+            state,
+            client: state.http.clone(),
+        }
     }
 
     /// Fire an event to all matching n8n automation triggers for the org

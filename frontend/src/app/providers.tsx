@@ -1,38 +1,51 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "react-hot-toast";
 import { useAuthStore } from "@/store/authStore";
+import { Spinner } from "@/components/ui";
+
+const AUTH_ONLY_BLOCK = ["/dashboard", "/contacts", "/campaigns", "/inbox", "/templates", "/whatsapp", "/team", "/settings", "/schedules", "/automation", "/billing", "/onboarding"];
+
+function shouldBlockOnAuth(pathname: string) {
+  return AUTH_ONLY_BLOCK.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`)
+  );
+}
 
 export default function ClientProviders({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const [queryClient] = useState(() => new QueryClient({
-    defaultOptions: {
-      queries: {
-        refetchOnWindowFocus: false,
-        retry: 1,
-      },
-    },
-  }));
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            refetchOnWindowFocus: false,
+            retry: 1,
+          },
+        },
+      })
+  );
 
   const { initialize, isLoading } = useAuthStore();
+  const pathname = usePathname();
 
   useEffect(() => {
     initialize();
   }, [initialize]);
 
-  if (isLoading) {
+  if (isLoading && shouldBlockOnAuth(pathname || "")) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-slate-950 text-slate-100 space-y-4">
-        <div className="relative w-16 h-16">
-          <div className="absolute top-0 left-0 w-full h-full border-4 border-emerald-500/20 rounded-full"></div>
-          <div className="absolute top-0 left-0 w-full h-full border-4 border-t-emerald-500 rounded-full animate-spin"></div>
-        </div>
-        <p className="text-slate-400 animate-pulse text-sm">Synchronizing dashboard...</p>
+      <div className="flex min-h-screen flex-col items-center justify-center space-y-4 bg-background text-foreground">
+        <Spinner className="h-12 w-12" />
+        <p className="animate-pulse text-sm text-muted-foreground">
+          Loading workspace…
+        </p>
       </div>
     );
   }
@@ -48,7 +61,7 @@ export default function ClientProviders({
             background: "#0d1423",
             color: "#f1f5f9",
             border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: "12px",
+            borderRadius: "8px",
           },
         }}
       />

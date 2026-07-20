@@ -5,6 +5,10 @@ edition = "2021"
 authors = ["ETE WhatsUp Team"]
 description = "Enterprise WhatsApp Bulk Messaging Platform — REST API"
 
+[lib]
+name = "whatsup_api"
+path = "src/lib.rs"
+
 [[bin]]
 name = "whatsup-api"
 path = "src/main.rs"

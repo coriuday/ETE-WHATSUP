@@ -79,7 +79,7 @@ impl<'a> WhatsAppService<'a> {
     pub fn new(state: &'a AppState) -> Self {
         Self {
             state,
-            client: Client::new(),
+            client: state.http.clone(),
         }
     }
 

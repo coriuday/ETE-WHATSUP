@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Users,
   Search,
@@ -17,6 +18,7 @@ import {
   Download
 } from "lucide-react";
 import toast from "react-hot-toast";
+import { api, getErrorMessage, listContacts } from "@/lib/api";
 
 interface ContactItem {
   id: string;
@@ -31,76 +33,66 @@ interface ContactItem {
 }
 
 export default function Contacts() {
-  const [contacts, setContacts] = useState<ContactItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  // Search & Filter
   const [search, setSearch] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [selectedTag, setSelectedTag] = useState("");
   const [allTags, setAllTags] = useState<string[]>([]);
-
-  // Pagination
   const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [totalCount, setTotalCount] = useState(0);
 
-  // Dialog Modals
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // Add Contact Form State
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [email, setEmail] = useState("");
   const [tagsInput, setTagsInput] = useState("");
 
-  // Import State
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
 
-  const fetchContacts = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const { api } = await import("@/lib/api");
-      const res = await api.get("/contacts", {
-        params: {
-          page,
-          search: search || undefined,
-          tags: selectedTag || undefined,
-        }
+  const {
+    data,
+    isLoading: loading,
+    error: queryError,
+    refetch,
+  } = useQuery({
+    queryKey: ["contacts", page, searchQuery, selectedTag],
+    queryFn: async () => {
+      const responseData = await listContacts({
+        page,
+        search: searchQuery || undefined,
       });
-      // Backend returns: { success, data: { data: [...], pagination: { total, page, total_pages, ... } } }
-      const responseData = res.data.data;
-      setContacts(responseData.data || []);
-      setTotalPages(responseData.pagination?.total_pages || 1);
-      setTotalCount(responseData.pagination?.total || 0);
+      // Support both PaginatedResponse shapes
+      const items = responseData?.data ?? responseData?.contacts ?? [];
+      const pagination = responseData?.pagination ?? {};
+      return {
+        contacts: items as ContactItem[],
+        totalPages: pagination.total_pages || 1,
+        totalCount: pagination.total || 0,
+      };
+    },
+  });
 
-      // Derive all tags dynamically
-      const tags = new Set<string>();
-      (responseData.data || []).forEach((c: ContactItem) => c.tags?.forEach((t: string) => tags.add(t)));
-      if (tags.size > 0) setAllTags(Array.from(tags));
-    } catch (e: any) {
-      const msg = e.response?.data?.error?.message || "Failed to load contacts";
-      setError(typeof msg === "string" ? msg : "Failed to load contacts");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const contacts = data?.contacts ?? [];
+  const totalPages = data?.totalPages ?? 1;
+  const totalCount = data?.totalCount ?? 0;
+  const error = queryError ? getErrorMessage(queryError, "Failed to load contacts") : "";
 
   useEffect(() => {
-    fetchContacts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, selectedTag]);
+    const tags = new Set<string>();
+    contacts.forEach((c) => c.tags?.forEach((t) => tags.add(t)));
+    if (tags.size > 0) setAllTags(Array.from(tags));
+  }, [contacts]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setPage(1);
-    fetchContacts();
+    setSearchQuery(search);
   };
+
+  const fetchContacts = () => refetch();
 
   const handleAddContact = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,7 +100,6 @@ export default function Contacts() {
     const formattedTags = tagsInput.split(",").map(t => t.trim()).filter(t => t !== "");
 
     try {
-      const { api } = await import("@/lib/api");
       await api.post("/contacts", {
         phone_number: phoneNumber,
         first_name: firstName || null,
@@ -119,11 +110,14 @@ export default function Contacts() {
 
       toast.success("Contact added successfully!");
       setIsAddOpen(false);
-      resetAddForm();
-      fetchContacts();
-    } catch (e: any) {
-      const msg = e.response?.data?.error?.message || "Failed to add contact";
-      toast.error(typeof msg === "string" ? msg : "Failed to add contact");
+      setFirstName("");
+      setLastName("");
+      setPhoneNumber("");
+      setEmail("");
+      setTagsInput("");
+      refetch();
+    } catch (err) {
+      toast.error(getErrorMessage(err, "Failed to add contact"));
     } finally {
       setSubmitting(false);
     }
@@ -149,7 +143,6 @@ export default function Contacts() {
     formData.append("file", csvFile);
 
     try {
-      const { api } = await import("@/lib/api");
       const res = await api.post("/contacts/import", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
@@ -158,11 +151,9 @@ export default function Contacts() {
       toast.success(jobId ? `Import started! Job ID: ${jobId.slice(0, 8)}...` : "Bulk import triggered!");
       setIsImportOpen(false);
       setCsvFile(null);
-      // Wait a bit then refresh
-      setTimeout(() => fetchContacts(), 3000);
-    } catch (e: any) {
-      const msg = e.response?.data?.error?.message || "Import failed";
-      toast.error(typeof msg === "string" ? msg : "Import failed");
+      setTimeout(() => refetch(), 3000);
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Import failed"));
     } finally {
       setImporting(false);
     }
@@ -172,13 +163,11 @@ export default function Contacts() {
     if (!confirm("Are you sure you want to delete this contact?")) return;
 
     try {
-      const { api } = await import("@/lib/api");
       await api.delete(`/contacts/${id}`);
       toast.success("Contact deleted");
-      fetchContacts();
-    } catch (e: any) {
-      const msg = e.response?.data?.error?.message || "Failed to delete contact";
-      toast.error(typeof msg === "string" ? msg : "Failed to delete");
+      refetch();
+    } catch (e) {
+      toast.error(getErrorMessage(e, "Failed to delete contact"));
     }
   };
 

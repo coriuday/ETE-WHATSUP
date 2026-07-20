@@ -1,4 +1,4 @@
-use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
+use chrono::{DateTime, Datelike, Duration, Utc};
 use serde_json::json;
 use tokio::time::sleep;
 use uuid::Uuid;
@@ -8,11 +8,9 @@ use crate::{
     AppState,
 };
 
-// Poll every 30 seconds
 const POLL_INTERVAL_SECS: u64 = 30;
 
 /// Persistent background daemon — launched once at startup.
-/// Every 30 seconds it looks for due campaign schedules and fires them.
 pub async fn run_scheduler(state: AppState) {
     tracing::info!("Campaign scheduler started (interval={}s)", POLL_INTERVAL_SECS);
 
@@ -25,7 +23,8 @@ pub async fn run_scheduler(state: AppState) {
 }
 
 async fn tick(state: &AppState) -> anyhow::Result<()> {
-    // Fetch all active schedules due to run
+    let mut tx = state.db.begin().await?;
+
     let due = sqlx::query!(
         r#"
         SELECT cs.id as schedule_id, cs.campaign_id, cs.organization_id,
@@ -35,15 +34,31 @@ async fn tick(state: &AppState) -> anyhow::Result<()> {
         WHERE cs.status = 'active'
           AND cs.next_run_at <= NOW()
         ORDER BY cs.next_run_at ASC
-        FOR UPDATE SKIP LOCKED
+        FOR UPDATE OF cs SKIP LOCKED
         "#,
     )
-    .fetch_all(&state.db)
+    .fetch_all(&mut *tx)
     .await?;
 
     if due.is_empty() {
+        tx.commit().await?;
         return Ok(());
     }
+
+    // Claim by bumping next_run_at temporarily so other schedulers skip them
+    let ids: Vec<Uuid> = due.iter().map(|s| s.schedule_id).collect();
+    sqlx::query!(
+        r#"
+        UPDATE campaign_schedules
+        SET next_run_at = NOW() + INTERVAL '1 hour'
+        WHERE id = ANY($1)
+        "#,
+        &ids
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
 
     tracing::info!("Scheduler: {} schedule(s) due", due.len());
 
@@ -52,7 +67,6 @@ async fn tick(state: &AppState) -> anyhow::Result<()> {
         let campaign_id = sched.campaign_id;
         let org_id = sched.organization_id;
 
-        // Check max_runs limit
         if let Some(max) = sched.max_runs {
             if sched.run_count >= max {
                 sqlx::query!(
@@ -65,7 +79,6 @@ async fn tick(state: &AppState) -> anyhow::Result<()> {
             }
         }
 
-        // Check ends_at
         if let Some(ends) = sched.ends_at {
             if Utc::now() > ends {
                 sqlx::query!(
@@ -78,7 +91,6 @@ async fn tick(state: &AppState) -> anyhow::Result<()> {
             }
         }
 
-        // Insert run history record
         let run_number = sched.run_count + 1;
         let history_id = sqlx::query_scalar!(
             r#"
@@ -94,20 +106,17 @@ async fn tick(state: &AppState) -> anyhow::Result<()> {
         .fetch_one(&state.db)
         .await?;
 
-        // Clone campaign → new draft → launch it
-        let new_campaign_id =
-            clone_and_launch(state, org_id, campaign_id, schedule_id).await;
+        // Clone campaign into a new draft, then launch (do not reset the template campaign)
+        let new_campaign_id = clone_and_launch(state, org_id, campaign_id).await;
 
         match new_campaign_id {
             Ok(new_id) => {
-                // Calculate next_run_at
                 let next = calculate_next_run(
                     Utc::now(),
                     sched.frequency.as_deref().unwrap_or("once"),
                     sched.cron_expression.as_deref(),
                 );
 
-                // Update schedule
                 if let Some(next_run) = next {
                     sqlx::query!(
                         r#"
@@ -123,7 +132,6 @@ async fn tick(state: &AppState) -> anyhow::Result<()> {
                     .execute(&state.db)
                     .await?;
                 } else {
-                    // once — mark completed
                     sqlx::query!(
                         r#"
                         UPDATE campaign_schedules
@@ -136,7 +144,6 @@ async fn tick(state: &AppState) -> anyhow::Result<()> {
                     .await?;
                 }
 
-                // Update history
                 sqlx::query!(
                     "UPDATE schedule_run_history SET status = 'completed', completed_at = NOW() WHERE id = $1",
                     history_id
@@ -167,6 +174,14 @@ async fn tick(state: &AppState) -> anyhow::Result<()> {
                     e
                 );
 
+                // Restore original next_run so it can retry
+                sqlx::query!(
+                    "UPDATE campaign_schedules SET next_run_at = NOW() WHERE id = $1 AND status = 'active'",
+                    schedule_id
+                )
+                .execute(&state.db)
+                .await?;
+
                 sqlx::query!(
                     r#"
                     UPDATE schedule_run_history
@@ -185,48 +200,23 @@ async fn tick(state: &AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
-// ── Launch campaign for a schedule ───────────────────────────────────────────
-
+/// Clone the source campaign to a new draft and launch it.
 async fn clone_and_launch(
     state: &AppState,
     org_id: Uuid,
     campaign_id: Uuid,
-    _schedule_id: Uuid,
 ) -> anyhow::Result<Uuid> {
     let system_user = Uuid::nil();
-
-    // Reset status to 'draft' so launch_campaign can transition it to 'running'.
-    // For recurring schedules this means each run re-sends to the same audience.
-    // (A future enhancement could clone the campaign row.)
-    sqlx::query!(
-        r#"
-        UPDATE campaigns
-        SET status = 'draft',
-            sent_count = 0, delivered_count = 0, read_count = 0,
-            failed_count = 0, reply_count = 0, started_at = NULL, completed_at = NULL
-        WHERE id = $1 AND organization_id = $2
-        "#,
-        campaign_id,
-        org_id
-    )
-    .execute(&state.db)
-    .await?;
-
-    // Delete old queue jobs for this campaign
-    sqlx::query!(
-        "DELETE FROM message_queue_jobs WHERE campaign_id = $1",
-        campaign_id
-    )
-    .execute(&state.db)
-    .await?;
-
     let svc = CampaignService::new(state);
-    svc.launch_campaign(org_id, campaign_id, system_user).await?;
+    let cloned = svc.clone_campaign(org_id, campaign_id, system_user).await?;
+    let new_id = cloned["id"]
+        .as_str()
+        .and_then(|s| Uuid::parse_str(s).ok())
+        .ok_or_else(|| anyhow::anyhow!("Clone did not return campaign id"))?;
 
-    Ok(campaign_id)
+    svc.launch_campaign(org_id, new_id, system_user).await?;
+    Ok(new_id)
 }
-
-// ── next_run_at calculation ──────────────────────────────────────────────────
 
 fn calculate_next_run(
     from: DateTime<Utc>,
@@ -234,14 +224,10 @@ fn calculate_next_run(
     cron_expression: Option<&str>,
 ) -> Option<DateTime<Utc>> {
     match frequency {
-        "once" => None, // Fires once, then done
-
+        "once" => None,
         "daily" => Some(from + Duration::days(1)),
-
         "weekly" => Some(from + Duration::weeks(1)),
-
         "monthly" => {
-            // Same day next month (clamped to last day of month)
             let next_month = if from.month() == 12 {
                 from.with_year(from.year() + 1)?.with_month(1)?
             } else {
@@ -249,23 +235,28 @@ fn calculate_next_run(
             };
             Some(next_month)
         }
-
         "custom" => {
-            // Parse cron expression
-            if let Some(expr) = cron_expression {
-                parse_cron_next(from, expr)
-            } else {
-                Some(from + Duration::days(1))
-            }
+            // Full cron parsing deferred; advance 1 hour as documented Phase 1 limitation
+            let _ = cron_expression;
+            Some(from + Duration::hours(1))
         }
-
         _ => Some(from + Duration::days(1)),
     }
 }
 
-/// Simple cron next-fire calculator for standard 5-field expressions.
-/// For full cron support, a dedicated crate like `croner` could be used.
-fn parse_cron_next(from: DateTime<Utc>, _expr: &str) -> Option<DateTime<Utc>> {
-    // Fallback: advance by 1 hour until a proper cron parser is integrated
-    Some(from + Duration::hours(1))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn once_has_no_next_run() {
+        assert!(calculate_next_run(Utc::now(), "once", None).is_none());
+    }
+
+    #[test]
+    fn daily_advances_one_day() {
+        let from = Utc::now();
+        let next = calculate_next_run(from, "daily", None).unwrap();
+        assert!(next > from);
+    }
 }

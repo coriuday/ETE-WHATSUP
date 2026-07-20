@@ -10,18 +10,42 @@ pub mod analytics;
 pub mod schedules;
 pub mod webhooks;
 
-use axum::{routing::get, Json, Router};
+use axum::{extract::State, routing::get, Json, Router};
 use serde_json::json;
 
 use crate::AppState;
 
-/// Health check endpoint
-async fn health() -> Json<serde_json::Value> {
+/// Liveness — process is up (no dependency checks)
+async fn health_live() -> Json<serde_json::Value> {
     Json(json!({
         "status": "ok",
         "service": "WhatsUp API",
         "version": env!("CARGO_PKG_VERSION")
     }))
+}
+
+/// Readiness — DB + Redis must respond
+async fn health_ready(State(state): State<AppState>) -> Result<Json<serde_json::Value>, crate::AppError> {
+    sqlx::query("SELECT 1")
+        .execute(&state.db)
+        .await
+        .map_err(|_| crate::AppError::ServiceUnavailable)?;
+
+    let mut conn = state
+        .redis
+        .get()
+        .await
+        .map_err(|_| crate::AppError::ServiceUnavailable)?;
+    let _: String = redis::cmd("PING")
+        .query_async(&mut conn)
+        .await
+        .map_err(|_| crate::AppError::ServiceUnavailable)?;
+
+    Ok(Json(json!({
+        "status": "ready",
+        "service": "WhatsUp API",
+        "checks": { "database": "ok", "redis": "ok" }
+    })))
 }
 
 pub fn create_router(state: AppState) -> Router {
@@ -35,23 +59,31 @@ pub fn create_router(state: AppState) -> Router {
         .nest("/analytics", analytics::router(state.clone()))
         .nest("/schedules", schedules::router(state.clone()))
         .nest("/messages", messages::router(state.clone()))
-        .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::rate_limit::api_rate_limit));
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::rate_limit::api_rate_limit,
+        ));
 
     Router::new()
-        // Health check (no auth, no rate limiting)
-        .route("/api/v1/health", get(health))
-        // Auth routes (auth rate limit)
+        .route("/api/v1/health", get(health_live))
+        .route("/api/v1/health/live", get(health_live))
+        .route(
+            "/api/v1/health/ready",
+            get(health_ready).with_state(state.clone()),
+        )
         .nest(
             "/api/v1/auth",
-            auth::router(state.clone())
-                .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::rate_limit::auth_rate_limit))
+            auth::router(state.clone()).layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                crate::middleware::rate_limit::auth_rate_limit,
+            )),
         )
-        // API routes (API rate limit)
         .nest("/api/v1", api_routes)
-        // Webhooks (webhook rate limit)
         .nest(
             "/api/v1/webhooks",
-            webhooks::router(state.clone())
-                .layer(axum::middleware::from_fn_with_state(state.clone(), crate::middleware::rate_limit::webhook_rate_limit))
+            webhooks::router(state.clone()).layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                crate::middleware::rate_limit::webhook_rate_limit,
+            )),
         )
 }

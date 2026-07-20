@@ -116,7 +116,7 @@ pub struct MetaContactProfile {
     pub name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MetaInboundMessage {
     pub from: String,
     pub id: String,
@@ -129,12 +129,12 @@ pub struct MetaInboundMessage {
     pub document: Option<MetaMediaContent>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MetaTextContent {
     pub body: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MetaMediaContent {
     pub id: String,
     pub mime_type: Option<String>,
@@ -143,7 +143,7 @@ pub struct MetaMediaContent {
     pub filename: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MetaMessageStatus {
     pub id: String,
     pub status: String,    // "sent", "delivered", "read", "failed"
@@ -152,7 +152,7 @@ pub struct MetaMessageStatus {
     pub errors: Option<Vec<MetaError>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MetaError {
     pub code: i32,
     pub title: String,

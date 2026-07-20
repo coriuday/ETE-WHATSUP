@@ -74,20 +74,21 @@ export default function Campaigns() {
     setLoading(true);
     setError("");
     try {
-      const { api } = await import("@/lib/api");
-      
+      const { api, listCampaigns, getErrorMessage } = await import("@/lib/api");
+
       const [campaignRes, accountRes, templateRes] = await Promise.allSettled([
-        api.get("/campaigns"),
+        listCampaigns(),
         api.get("/whatsapp/accounts"),
-        api.get("/templates")
+        api.get("/templates"),
       ]);
 
       if (campaignRes.status === "fulfilled") {
-        setCampaigns(campaignRes.value.data.data.data || []);
+        const payload = campaignRes.value;
+        setCampaigns(payload?.data || []);
       } else {
-        throw new Error(campaignRes.reason?.response?.data?.error?.message || "Failed to load campaigns");
+        throw new Error(getErrorMessage(campaignRes.reason, "Failed to load campaigns"));
       }
-      
+
       if (accountRes.status === "fulfilled") {
         const accounts: WaAccount[] = accountRes.value.data.data.accounts || [];
         setWaAccounts(accounts);
@@ -97,9 +98,9 @@ export default function Campaigns() {
       if (templateRes.status === "fulfilled") {
         setTemplates(templateRes.value.data.data.data || []);
       }
-    } catch (e: any) {
-      const msg = e.message || "Failed to load campaigns data";
-      setError(msg);
+    } catch (e: unknown) {
+      const { getErrorMessage } = await import("@/lib/api");
+      setError(getErrorMessage(e, "Failed to load campaigns data"));
     } finally {
       setLoading(false);
     }

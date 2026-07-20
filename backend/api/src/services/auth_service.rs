@@ -44,50 +44,66 @@ impl<'a> AuthService<'a> {
         let verify_token = generate_secure_token(32);
         let verify_expires = Utc::now() + Duration::hours(24);
 
-        let user = sqlx::query!(
+        let user = sqlx::query_as::<
+            _,
+            (
+                Uuid,
+                String,
+                String,
+                String,
+                String,
+                String,
+                bool,
+                bool,
+                chrono::DateTime<chrono::Utc>,
+            ),
+        >(
             r#"
             INSERT INTO users (
                 email, password_hash, first_name, last_name,
                 role, status, email_verify_token, email_verify_expires_at
-            ) VALUES ($1, $2, $3, $4, 'business_admin', 'active', $5, $6)
+            ) VALUES ($1, $2, $3, $4, 'business_admin', 'pending_verification', $5, $6)
             RETURNING id, email, first_name, last_name, role::text, status::text,
                       email_verified, two_factor_enabled, created_at
             "#,
-            req.email,
-            password_hash,
-            req.first_name,
-            req.last_name,
-            verify_token,
-            verify_expires
         )
+        .bind(&req.email)
+        .bind(&password_hash)
+        .bind(&req.first_name)
+        .bind(&req.last_name)
+        .bind(&verify_token)
+        .bind(verify_expires)
         .fetch_one(&self.state.db)
         .await
         .map_err(AppError::Database)?;
+
+        let (id, email, first_name, last_name, _role, _status, email_verified, two_factor_enabled, created_at) =
+            user;
 
         // Create org if org_name provided
         if let Some(org_name) = req.org_name {
             if !org_name.is_empty() {
                 let slug = slug::slugify(&org_name);
-                let org = sqlx::query!(
+                let org_id = sqlx::query_scalar::<_, Uuid>(
                     r#"
                     INSERT INTO organizations (name, slug, owner_id)
                     VALUES ($1, $2, $3)
                     ON CONFLICT (slug) DO UPDATE SET slug = $2 || '-' || substr(md5(random()::text), 1, 4)
                     RETURNING id
                     "#,
-                    org_name,
-                    slug,
-                    user.id
                 )
+                .bind(&org_name)
+                .bind(&slug)
+                .bind(id)
                 .fetch_one(&self.state.db)
                 .await
                 .map_err(AppError::Database)?;
 
-                sqlx::query!(
+                sqlx::query(
                     "INSERT INTO org_members (organization_id, user_id, role) VALUES ($1, $2, 'owner')",
-                    org.id,
-                    user.id
                 )
+                .bind(org_id)
+                .bind(id)
                 .execute(&self.state.db)
                 .await
                 .map_err(AppError::Database)?;
@@ -101,18 +117,18 @@ impl<'a> AuthService<'a> {
             .await;
 
         Ok(UserResponse {
-            id: user.id,
-            email: user.email,
-            first_name: user.first_name.clone(),
-            last_name: user.last_name.clone(),
-            full_name: format!("{} {}", user.first_name, user.last_name),
+            id,
+            email,
+            first_name: first_name.clone(),
+            last_name: last_name.clone(),
+            full_name: format!("{} {}", first_name, last_name),
             avatar_url: None,
-            role: crate::models::user::UserRole::TeamMember,
+            role: crate::models::user::UserRole::BusinessAdmin,
             status: crate::models::user::UserStatus::PendingVerification,
-            email_verified: user.email_verified,
-            two_factor_enabled: user.two_factor_enabled,
+            email_verified,
+            two_factor_enabled,
             last_login_at: None,
-            created_at: user.created_at,
+            created_at,
         })
     }
 
@@ -141,11 +157,16 @@ impl<'a> AuthService<'a> {
             return Err(AppError::InvalidCredentials);
         }
 
-        // Check status
+        // Check status + email verification
         match user.status {
             crate::models::user::UserStatus::Suspended => return Err(AppError::AccountSuspended),
-            crate::models::user::UserStatus::PendingVerification => return Err(AppError::AccountNotVerified),
+            crate::models::user::UserStatus::PendingVerification => {
+                return Err(AppError::AccountNotVerified)
+            }
             _ => {}
+        }
+        if !user.email_verified {
+            return Err(AppError::AccountNotVerified);
         }
 
         // Check 2FA
@@ -533,8 +554,39 @@ impl<'a> AuthService<'a> {
     }
 
     pub async fn disable_2fa(&self, user_id: Uuid, code: &str) -> AppResult<()> {
-        // Verify code before disabling
-        self.enable_2fa(user_id, code).await?; // reuse verification
+        let user = sqlx::query!(
+            "SELECT two_factor_secret, email, two_factor_enabled FROM users WHERE id = $1",
+            user_id
+        )
+        .fetch_one(&self.state.db)
+        .await
+        .map_err(AppError::Database)?;
+
+        if !user.two_factor_enabled {
+            return Err(AppError::BadRequest("2FA is not enabled".into()));
+        }
+
+        let secret = user
+            .two_factor_secret
+            .ok_or(AppError::BadRequest("2FA not set up".into()))?;
+        let decrypted =
+            crate::utils::encryption::decrypt(&secret, &self.state.config.encryption_key)
+                .map_err(|e| AppError::Internal(e))?;
+
+        let totp = totp_rs::TOTP::new(
+            totp_rs::Algorithm::SHA1,
+            6,
+            1,
+            30,
+            decrypted.as_bytes().to_vec(),
+            None,
+            user.email,
+        )
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("TOTP error")))?;
+
+        if !totp.check_current(code).unwrap_or(false) {
+            return Err(AppError::InvalidTwoFactorCode);
+        }
 
         sqlx::query!(
             "UPDATE users SET two_factor_enabled = FALSE, two_factor_secret = NULL WHERE id = $1",

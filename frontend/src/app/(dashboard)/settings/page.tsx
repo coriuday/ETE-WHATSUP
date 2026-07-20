@@ -34,7 +34,7 @@ export default function WorkspaceSettings() {
 
   useEffect(() => {
     if (user) {
-      setFullName(user.full_name || "");
+      setFullName(user.fullName || "");
       setEmail(user.email || "");
       setTwoFaEnabled(user.twoFactorEnabled);
     }
