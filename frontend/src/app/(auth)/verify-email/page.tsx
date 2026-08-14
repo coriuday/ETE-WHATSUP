@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { CheckCircle, XCircle, Loader2 } from "lucide-react";
@@ -8,6 +8,14 @@ import { AuthSplit } from "@/components/auth/auth-split";
 import { Button } from "@/components/ui/button";
 
 export default function VerifyEmail() {
+  return (
+    <Suspense fallback={null}>
+      <VerifyEmailInner />
+    </Suspense>
+  );
+}
+
+function VerifyEmailInner() {
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
 

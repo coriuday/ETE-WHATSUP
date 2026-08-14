@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
@@ -7,6 +8,14 @@ import { PageHeader, StatCard, ComingSoon, ErrorState } from "@/components/ui";
 import { useSearchParams } from "next/navigation";
 
 export default function BillingPage() {
+  return (
+    <Suspense fallback={null}>
+      <BillingPageInner />
+    </Suspense>
+  );
+}
+
+function BillingPageInner() {
   const tab = useSearchParams().get("tab");
   const orgId = useAuthStore((s) => s.activeOrgId || s.organization?.id);
   const q = useQuery({

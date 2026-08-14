@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { api, getErrorMessage } from "@/lib/api";
@@ -8,6 +8,14 @@ import { PageHeader, Button, Input, DataTable, StatusBadge, ErrorState, EmptySta
 import toast from "react-hot-toast";
 
 export default function AutomationPage() {
+  return (
+    <Suspense fallback={null}>
+      <AutomationPageInner />
+    </Suspense>
+  );
+}
+
+function AutomationPageInner() {
   const tab = useSearchParams().get("tab") || "flows";
   const flows = useQuery({
     queryKey: ["automations"],

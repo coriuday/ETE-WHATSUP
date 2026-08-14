@@ -1,11 +1,20 @@
 "use client";
 
+import { Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getOverview, getCampaignAnalytics } from "@/lib/api/analytics";
 import { PageHeader, StatCard, ErrorState, DataTable, StatusBadge } from "@/components/ui";
 import { useSearchParams } from "next/navigation";
 
 export default function AnalyticsPage() {
+  return (
+    <Suspense fallback={null}>
+      <AnalyticsPageInner />
+    </Suspense>
+  );
+}
+
+function AnalyticsPageInner() {
   const tab = useSearchParams().get("tab") || "overview";
   const overview = useQuery({ queryKey: ["analytics-overview"], queryFn: getOverview });
   const campaigns = useQuery({ queryKey: ["analytics-campaigns"], queryFn: getCampaignAnalytics });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { Suspense, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
@@ -16,6 +16,14 @@ type CampaignRow = {
 };
 
 export default function CampaignsPage() {
+  return (
+    <Suspense fallback={null}>
+      <CampaignsPageInner />
+    </Suspense>
+  );
+}
+
+function CampaignsPageInner() {
   const router = useRouter();
   const params = useSearchParams();
   const status = params.get("status") || "";

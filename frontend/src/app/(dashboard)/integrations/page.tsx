@@ -1,9 +1,18 @@
 "use client";
 
+import { Suspense } from "react";
 import { PageHeader, ComingSoon } from "@/components/ui";
 import { useSearchParams } from "next/navigation";
 
 export default function IntegrationsPage() {
+  return (
+    <Suspense fallback={null}>
+      <IntegrationsPageInner />
+    </Suspense>
+  );
+}
+
+function IntegrationsPageInner() {
   const tab = useSearchParams().get("tab");
   return (
     <div className="space-y-6">

@@ -4,10 +4,18 @@ import { useQuery } from "@tanstack/react-query";
 import { api, getErrorMessage } from "@/lib/api";
 import { PageHeader, DataTable, StatusBadge, ErrorState, EmptyState, Button, Input } from "@/components/ui";
 import { useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import toast from "react-hot-toast";
 
 export default function WhatsAppPage() {
+  return (
+    <Suspense fallback={null}>
+      <WhatsAppPageInner />
+    </Suspense>
+  );
+}
+
+function WhatsAppPageInner() {
   const tab = useSearchParams().get("tab") || "accounts";
   const q = useQuery({
     queryKey: ["wa-accounts"],

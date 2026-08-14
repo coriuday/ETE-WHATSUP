@@ -4,11 +4,19 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { PageHeader, DataTable, StatusBadge, ErrorState, EmptyState, Button } from "@/components/ui";
 import { useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import toast from "react-hot-toast";
 import { getErrorMessage } from "@/lib/api";
 
 export default function TemplatesPage() {
+  return (
+    <Suspense fallback={null}>
+      <TemplatesPageInner />
+    </Suspense>
+  );
+}
+
+function TemplatesPageInner() {
   const tab = useSearchParams().get("tab") || "templates";
   const q = useQuery({
     queryKey: ["templates"],

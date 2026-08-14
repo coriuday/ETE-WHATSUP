@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
@@ -7,6 +8,14 @@ import { useAuthStore } from "@/store/authStore";
 import { PageHeader, DataTable, ErrorState, EmptyState } from "@/components/ui";
 
 export default function TeamPage() {
+  return (
+    <Suspense fallback={null}>
+      <TeamPageInner />
+    </Suspense>
+  );
+}
+
+function TeamPageInner() {
   const tab = useSearchParams().get("tab") || "members";
   const orgId = useAuthStore((s) => s.activeOrgId || s.organization?.id);
   const members = useQuery({
