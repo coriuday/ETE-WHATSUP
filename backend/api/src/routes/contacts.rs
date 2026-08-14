@@ -25,6 +25,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         // Contacts CRUD
         .route("/", get(list_contacts).post(create_contact))
+        .route("/export", get(export_contacts))
         .route("/:id", get(get_contact).put(update_contact).delete(delete_contact))
         .route("/bulk", post(bulk_action))
         // Import
@@ -228,4 +229,38 @@ async fn delete_segment(
     let service = ContactService::new(&state);
     service.delete_segment(org_id, id).await?;
     Ok(Json(ApiResponse::with_message((), "Segment deleted")))
+}
+
+async fn export_contacts(
+    State(state): State<AppState>,
+    RequireOrgViewer(auth): RequireOrgViewer,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
+    let rows = sqlx::query(
+        r#"SELECT phone_number, first_name, last_name, email, tags, wa_status::text as wa_status
+           FROM contacts WHERE organization_id = $1 AND deleted_at IS NULL
+           ORDER BY created_at DESC LIMIT 10000"#,
+    )
+    .bind(org_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+    let csv = {
+        use sqlx::Row;
+        let mut w = String::from("phone_number,first_name,last_name,email,tags,status\n");
+        for r in rows {
+            let tags: Vec<String> = r.try_get("tags").unwrap_or_default();
+            w.push_str(&format!(
+                "{},{},{},{},{},{}\n",
+                r.get::<String, _>("phone_number"),
+                r.try_get::<Option<String>, _>("first_name").ok().flatten().unwrap_or_default(),
+                r.try_get::<Option<String>, _>("last_name").ok().flatten().unwrap_or_default(),
+                r.try_get::<Option<String>, _>("email").ok().flatten().unwrap_or_default(),
+                tags.join("|"),
+                r.try_get::<Option<String>, _>("wa_status").ok().flatten().unwrap_or_default()
+            ));
+        }
+        w
+    };
+    Ok(Json(ApiResponse::ok(serde_json::json!({ "csv": csv }))))
 }

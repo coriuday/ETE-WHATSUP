@@ -4,6 +4,7 @@ export interface ContactListParams {
   page?: number;
   limit?: number;
   search?: string;
+  tags?: string;
 }
 
 export async function listContacts(params: ContactListParams = {}) {

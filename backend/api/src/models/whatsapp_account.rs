@@ -52,7 +52,7 @@ pub struct ConnectWaAccountRequest {
     #[validate(length(min = 7, max = 20))]
     pub phone_number: String,
     pub phone_number_id: String,
-    pub waba_id: String,
+    pub waba_id: Option<String>,
     pub access_token: String,
 }
 

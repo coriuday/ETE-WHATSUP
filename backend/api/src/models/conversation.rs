@@ -36,6 +36,17 @@ pub struct Conversation {
     pub updated_at: DateTime<Utc>,
 }
 
+impl ConversationStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Pending => "pending",
+            Self::Resolved => "resolved",
+            Self::Snoozed => "snoozed",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ConversationListQuery {
     pub status: Option<ConversationStatus>,
@@ -44,11 +55,14 @@ pub struct ConversationListQuery {
     pub label: Option<String>,
     pub page: Option<u32>,
     pub limit: Option<u32>,
+    pub unread_only: Option<bool>,
+    pub unassigned: Option<bool>,
+    pub mine: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SendMessageRequest {
-    pub message_type: String,
+    pub message_type: Option<String>,
     pub body: Option<String>,
     pub media_url: Option<String>,
     pub template_id: Option<Uuid>,

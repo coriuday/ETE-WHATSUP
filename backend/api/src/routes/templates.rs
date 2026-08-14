@@ -115,6 +115,22 @@ async fn update_template(
 ) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
 
+    let body_text = req["body_text"].as_str();
+    let display_name = req["display_name"].as_str();
+    sqlx::query(
+        r#"UPDATE templates SET
+            body_text = COALESCE($3, body_text),
+            display_name = COALESCE($4, display_name)
+           WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL"#,
+    )
+    .bind(id)
+    .bind(org_id)
+    .bind(body_text)
+    .bind(display_name)
+    .execute(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
     crate::services::audit_service::audit_log(
         &state,
         "template.updated",

@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import Sidebar from "./sidebar";
 import Topbar from "./topbar";
+import { cn } from "@/lib/utils";
 
 interface DashboardShellProps {
   children: React.ReactNode;
@@ -10,23 +12,27 @@ interface DashboardShellProps {
 
 export default function DashboardShell({ children }: DashboardShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const pathname = usePathname();
+  const fullBleed = pathname.startsWith("/inbox");
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-950">
-      {/* Sidebar Navigation */}
-      <Sidebar isOpen={sidebarOpen} setIsOpen={setSidebarOpen} />
-
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Top Header */}
+    <div className="flex h-screen overflow-hidden bg-background">
+      <Sidebar
+        isOpen={sidebarOpen}
+        setIsOpen={setSidebarOpen}
+        collapsed={collapsed}
+        onToggleCollapse={() => setCollapsed((v) => !v)}
+      />
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Topbar onMenuClick={() => setSidebarOpen(true)} />
-
-        {/* Scrollable page body */}
-        <main className="flex-1 overflow-y-auto px-6 py-8 relative">
-          {/* Background overlay grids */}
-          <div className="absolute top-0 right-0 w-[300px] h-[300px] bg-primary/5 blur-[80px] pointer-events-none rounded-full"></div>
-          
-          <div className="max-w-7xl mx-auto space-y-6 relative z-10">
+        <main
+          className={cn(
+            "relative flex-1",
+            fullBleed ? "overflow-hidden" : "overflow-y-auto px-6 py-6"
+          )}
+        >
+          <div className={cn(fullBleed ? "h-full" : "relative z-10 mx-auto max-w-7xl space-y-6")}>
             {children}
           </div>
         </main>

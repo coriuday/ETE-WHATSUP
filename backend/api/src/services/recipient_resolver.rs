@@ -1,4 +1,5 @@
 use uuid::Uuid;
+use sqlx::Row;
 
 use crate::{
     errors::{AppError, AppResult},
@@ -109,36 +110,54 @@ async fn resolve_from_segment(
     org_id: Uuid,
     segment_id: Uuid,
 ) -> AppResult<Vec<Recipient>> {
-    // For now: return all contacts in the org that match the segment's
-    // pre-materialized count. Dynamic filter evaluation is a future iteration.
-    // We join on contact_segments to at least scope it correctly.
-    let rows = sqlx::query!(
+    let segment = sqlx::query("SELECT filter_rules FROM contact_segments WHERE id = $1 AND organization_id = $2")
+        .bind(segment_id)
+        .bind(org_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(AppError::Database)?
+        .ok_or_else(|| AppError::NotFound("Segment".into()))?;
+
+    let filter: serde_json::Value = sqlx::Row::try_get(&segment, "filter_rules").unwrap_or(serde_json::json!({}));
+    let tag = filter
+        .get("tag")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    let search = filter
+        .get("search")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+
+    let rows = sqlx::query(
         r#"
         SELECT c.id, c.phone_number, c.first_name, c.last_name
         FROM contacts c
         WHERE c.organization_id = $1
           AND c.deleted_at IS NULL
           AND c.wa_status = 'active'
-          AND EXISTS (
-              SELECT 1 FROM contact_segments cs
-              WHERE cs.id = $2 AND cs.organization_id = $1
-          )
+          AND ($2 = '' OR $2 = ANY(c.tags))
+          AND ($3 = '' OR c.phone_number ILIKE '%' || $3 || '%' OR coalesce(c.first_name,'') ILIKE '%' || $3 || '%')
         "#,
-        org_id,
-        segment_id
     )
+    .bind(org_id)
+    .bind(&tag)
+    .bind(&search)
     .fetch_all(&state.db)
     .await
     .map_err(AppError::Database)?;
 
     Ok(rows
         .into_iter()
-        .map(|r| Recipient {
-            contact_id: r.id,
-            phone_number: r.phone_number,
-            first_name: r.first_name,
-            last_name: r.last_name,
-        })
+        .map(|r| {
+            use sqlx::Row;
+            Recipient {
+            contact_id: r.get("id"),
+            phone_number: r.get("phone_number"),
+            first_name: r.try_get("first_name").ok().flatten(),
+            last_name: r.try_get("last_name").ok().flatten(),
+        }})
         .collect())
 }
 

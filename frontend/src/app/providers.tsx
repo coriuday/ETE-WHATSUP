@@ -3,16 +3,34 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ThemeProvider } from "next-themes";
 import { Toaster } from "react-hot-toast";
+import { MuiProvider } from "@/components/mui/mui-provider";
 import { useAuthStore } from "@/store/authStore";
 import { Spinner } from "@/components/ui";
 
-const AUTH_ONLY_BLOCK = ["/dashboard", "/contacts", "/campaigns", "/inbox", "/templates", "/whatsapp", "/team", "/settings", "/schedules", "/automation", "/billing", "/onboarding"];
+const AUTH_ONLY_BLOCK = [
+  "/dashboard",
+  "/activity",
+  "/notifications",
+  "/contacts",
+  "/campaigns",
+  "/inbox",
+  "/templates",
+  "/whatsapp",
+  "/team",
+  "/settings",
+  "/schedules",
+  "/automation",
+  "/automations",
+  "/billing",
+  "/analytics",
+  "/integrations",
+  "/onboarding",
+];
 
 function shouldBlockOnAuth(pathname: string) {
-  return AUTH_ONLY_BLOCK.some(
-    (p) => pathname === p || pathname.startsWith(`${p}/`)
-  );
+  return AUTH_ONLY_BLOCK.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
 export default function ClientProviders({
@@ -43,28 +61,25 @@ export default function ClientProviders({
     return (
       <div className="flex min-h-screen flex-col items-center justify-center space-y-4 bg-background text-foreground">
         <Spinner className="h-12 w-12" />
-        <p className="animate-pulse text-sm text-muted-foreground">
-          Loading workspace…
-        </p>
+        <p className="text-sm text-muted-foreground">Loading workspace…</p>
       </div>
     );
   }
 
   return (
-    <QueryClientProvider client={queryClient}>
-      {children}
-      <Toaster
-        position="top-right"
-        toastOptions={{
-          duration: 4000,
-          style: {
-            background: "#0d1423",
-            color: "#f1f5f9",
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: "8px",
-          },
-        }}
-      />
-    </QueryClientProvider>
+    <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
+      <MuiProvider>
+        <QueryClientProvider client={queryClient}>
+          {children}
+          <Toaster
+            position="top-right"
+            toastOptions={{
+              duration: 4000,
+              className: "!bg-card !text-foreground !border !border-border !rounded-lg !shadow-none",
+            }}
+          />
+        </QueryClientProvider>
+      </MuiProvider>
+    </ThemeProvider>
   );
 }

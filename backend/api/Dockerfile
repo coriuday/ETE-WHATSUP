@@ -40,9 +40,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy compiled binary from builder
-COPY --from=builder /app/target/release/api /app/api
+COPY --from=builder /app/target/release/whatsup-api /app/whatsup-api
 COPY .env.example /app/.env.example
 
 EXPOSE 8080
 
-CMD ["/app/api"]
+CMD ["/app/whatsup-api"]

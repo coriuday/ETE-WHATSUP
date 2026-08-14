@@ -39,7 +39,7 @@ async fn list_messages(
         limit: query.limit,
     };
 
-    let total: i64 = sqlx::query_scalar(
+    let total: i64 = sqlx::query_scalar::<_, Option<i64>>(
         r#"
         SELECT COUNT(*) FROM messages
         WHERE organization_id = $1

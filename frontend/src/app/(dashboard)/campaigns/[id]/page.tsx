@@ -107,7 +107,7 @@ export default function CampaignDetails() {
 
   if (error || !campaign) {
     return (
-      <div className="glass-panel p-10 rounded-2xl text-center text-muted-foreground border border-white/5 space-y-4">
+      <div className="rounded-xl border border-border bg-card p-10 rounded-2xl text-center text-muted-foreground border border-border space-y-4">
         <AlertCircle className="w-8 h-8 text-rose-400 mx-auto" />
         <p>{error || "Campaign not found"}</p>
         <Link href="/campaigns" className="text-primary hover:underline block">
@@ -127,16 +127,16 @@ export default function CampaignDetails() {
   return (
     <div className="space-y-6">
       {/* Title Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/5 pb-5">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-border pb-5">
         <div className="flex items-center gap-3">
           <Link
             href="/campaigns"
-            className="p-2 rounded-xl bg-white/5 border border-white/10 text-muted-foreground hover:text-white"
+            className="p-2 rounded-xl bg-muted border border-border text-muted-foreground hover:text-foreground"
           >
             <ArrowLeft className="w-4.5 h-4.5" />
           </Link>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-white">{campaign.name}</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">{campaign.name}</h1>
             <p className="text-muted-foreground text-sm flex items-center gap-1.5 mt-0.5">
               <span>Status:</span>
               <span className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded-full uppercase ${
@@ -154,7 +154,7 @@ export default function CampaignDetails() {
         <div className="flex items-center gap-3">
           <button
             onClick={fetchCampaignDetails}
-            className="p-2.5 rounded-xl bg-white/5 border border-white/10 text-muted-foreground hover:text-white hover:bg-white/10"
+            className="p-2.5 rounded-xl bg-muted border border-border text-muted-foreground hover:text-foreground hover:bg-white/10"
           >
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -163,21 +163,21 @@ export default function CampaignDetails() {
 
       {/* KPI Cards Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
-        <div className="glass-panel p-5 rounded-2xl">
+        <div className="rounded-xl border border-border bg-card p-5 rounded-2xl">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Total Targeted</p>
-          <p className="text-2xl font-bold text-white">{(campaign.total_recipient_count || 0).toLocaleString()}</p>
+          <p className="text-2xl font-bold text-foreground">{(campaign.total_recipient_count || 0).toLocaleString()}</p>
         </div>
-        <div className="glass-panel p-5 rounded-2xl">
+        <div className="rounded-xl border border-border bg-card p-5 rounded-2xl">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Delivered</p>
           <p className="text-2xl font-bold text-emerald-400">{(campaign.delivered_count || 0).toLocaleString()}</p>
         </div>
-        <div className="glass-panel p-5 rounded-2xl">
+        <div className="rounded-xl border border-border bg-card p-5 rounded-2xl">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Read Rate</p>
           <p className="text-2xl font-bold text-sky-400">
             {(campaign.sent_count || 0) > 0 ? `${Math.round(((campaign.read_count || 0) / (campaign.sent_count || 1)) * 100)}%` : "0%"}
           </p>
         </div>
-        <div className="glass-panel p-5 rounded-2xl">
+        <div className="rounded-xl border border-border bg-card p-5 rounded-2xl">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Failed</p>
           <p className="text-2xl font-bold text-rose-400">{(campaign.failed_count || 0).toLocaleString()}</p>
         </div>
@@ -186,8 +186,8 @@ export default function CampaignDetails() {
       {/* Charts & Timeline */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Pie Chart */}
-        <div className="glass-panel p-6 rounded-2xl border border-white/5 flex flex-col items-center">
-          <h3 className="text-sm font-bold text-white mb-6 align-self-start">Delivery Funnel Distribution</h3>
+        <div className="rounded-xl border border-border bg-card p-6 rounded-2xl border border-border flex flex-col items-center">
+          <h3 className="text-sm font-bold text-foreground mb-6 align-self-start">Delivery Funnel Distribution</h3>
           
           <div className="h-[220px] w-full relative">
             {pieData.length > 0 ? (
@@ -227,23 +227,23 @@ export default function CampaignDetails() {
         </div>
 
         {/* Campaign Info */}
-        <div className="lg:col-span-2 glass-panel p-6 rounded-2xl border border-white/5 flex flex-col justify-between">
+        <div className="lg:col-span-2 rounded-xl border border-border bg-card p-6 rounded-2xl border border-border flex flex-col justify-between">
           <div>
-            <h3 className="text-sm font-bold text-white mb-4">Metadata & Timeline</h3>
+            <h3 className="text-sm font-bold text-foreground mb-4">Metadata & Timeline</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-              <div className="p-3.5 bg-white/2 border border-white/5 rounded-xl">
+              <div className="p-3.5 bg-white/2 border border-border rounded-xl">
                 <span className="text-muted-foreground uppercase font-semibold block mb-1">Created At</span>
-                <span className="font-bold text-white">{new Date(campaign.created_at).toLocaleString()}</span>
+                <span className="font-bold text-foreground">{new Date(campaign.created_at).toLocaleString()}</span>
               </div>
-              <div className="p-3.5 bg-white/2 border border-white/5 rounded-xl">
+              <div className="p-3.5 bg-white/2 border border-border rounded-xl">
                 <span className="text-muted-foreground uppercase font-semibold block mb-1">Started At</span>
-                <span className="font-bold text-white">{campaign.started_at ? new Date(campaign.started_at).toLocaleString() : "Pending"}</span>
+                <span className="font-bold text-foreground">{campaign.started_at ? new Date(campaign.started_at).toLocaleString() : "Pending"}</span>
               </div>
-              <div className="p-3.5 bg-white/2 border border-white/5 rounded-xl">
+              <div className="p-3.5 bg-white/2 border border-border rounded-xl">
                 <span className="text-muted-foreground uppercase font-semibold block mb-1">Finished At</span>
-                <span className="font-bold text-white">{campaign.completed_at ? new Date(campaign.completed_at).toLocaleString() : "Running"}</span>
+                <span className="font-bold text-foreground">{campaign.completed_at ? new Date(campaign.completed_at).toLocaleString() : "Running"}</span>
               </div>
-              <div className="p-3.5 bg-white/2 border border-white/5 rounded-xl">
+              <div className="p-3.5 bg-white/2 border border-border rounded-xl">
                 <span className="text-muted-foreground uppercase font-semibold block mb-1">WABA Sender Linked</span>
                 <span className="font-bold text-primary">Connected Meta Phone</span>
               </div>
@@ -253,7 +253,7 @@ export default function CampaignDetails() {
           <div className="mt-6 p-4 bg-primary/5 border border-primary/10 rounded-xl flex items-center gap-3">
             <Tag className="w-5 h-5 text-primary" />
             <div className="text-xs">
-              <span className="font-bold text-white block">Audience Target</span>
+              <span className="font-bold text-foreground block">Audience Target</span>
               <span className="text-muted-foreground mt-0.5 block">This campaign broadcasted to target segments.</span>
             </div>
           </div>
@@ -261,15 +261,15 @@ export default function CampaignDetails() {
       </div>
 
       {/* Messages Logs Table */}
-      <div className="glass-panel rounded-2xl border border-white/5 overflow-hidden">
-        <div className="px-6 py-4 border-b border-white/5">
-          <h3 className="text-sm font-bold text-white">Broadcast Delivery Logs</h3>
+      <div className="rounded-xl border border-border bg-card rounded-2xl border border-border overflow-hidden">
+        <div className="px-6 py-4 border-b border-border">
+          <h3 className="text-sm font-bold text-foreground">Broadcast Delivery Logs</h3>
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-white/5 bg-white/2">
+              <tr className="border-b border-border bg-white/2">
                 <th className="px-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Receiver Contact</th>
                 <th className="px-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Meta Message ID</th>
                 <th className="px-6 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status</th>
@@ -287,7 +287,7 @@ export default function CampaignDetails() {
               ) : (
                 messages.map((msg) => (
                   <tr key={msg.id} className="hover:bg-white/2 transition-colors">
-                    <td className="px-6 py-4 text-sm font-semibold text-white">
+                    <td className="px-6 py-4 text-sm font-semibold text-foreground">
                       Receiver (ID: {msg.contact_id.slice(0, 5)})
                     </td>
                     <td className="px-6 py-4 text-xs text-muted-foreground font-mono">{msg.wa_message_id || "Pending"}</td>

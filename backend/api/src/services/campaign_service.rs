@@ -32,29 +32,44 @@ impl<'a> CampaignService<'a> {
         };
         let offset = pagination.offset();
 
-        let total: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM campaigns WHERE organization_id = $1 AND deleted_at IS NULL",
-            org_id
+        let status_filter = query.status.as_ref().map(|s| match s {
+            crate::models::campaign::CampaignStatus::Draft => "draft",
+            crate::models::campaign::CampaignStatus::Scheduled => "scheduled",
+            crate::models::campaign::CampaignStatus::Running => "running",
+            crate::models::campaign::CampaignStatus::Paused => "paused",
+            crate::models::campaign::CampaignStatus::Completed => "completed",
+            crate::models::campaign::CampaignStatus::Failed => "failed",
+            crate::models::campaign::CampaignStatus::Cancelled => "cancelled",
+        });
+
+        let total: i64 = sqlx::query_scalar::<_, Option<i64>>(
+            r#"SELECT COUNT(*) FROM campaigns
+               WHERE organization_id = $1 AND deleted_at IS NULL
+                 AND ($2::text IS NULL OR status::text = $2)"#,
         )
+        .bind(org_id)
+        .bind(status_filter)
         .fetch_one(&self.state.db)
         .await
         .map_err(AppError::Database)?
         .unwrap_or(0);
 
-        let campaigns = sqlx::query!(
+        let campaigns = sqlx::query(
             r#"
             SELECT id, name, description, type::text, status::text,
                    total_recipients, sent_count, delivered_count, read_count, failed_count,
                    scheduled_at, started_at, completed_at, created_at
             FROM campaigns
             WHERE organization_id = $1 AND deleted_at IS NULL
+              AND ($2::text IS NULL OR status::text = $2)
             ORDER BY created_at DESC
-            LIMIT $2 OFFSET $3
+            LIMIT $3 OFFSET $4
             "#,
-            org_id,
-            limit as i64,
-            offset
         )
+        .bind(org_id)
+        .bind(status_filter)
+        .bind(limit as i64)
+        .bind(offset)
         .fetch_all(&self.state.db)
         .await
         .map_err(AppError::Database)?;
@@ -62,23 +77,24 @@ impl<'a> CampaignService<'a> {
         let data: Vec<serde_json::Value> = campaigns
             .iter()
             .map(|c| {
+                use sqlx::Row;
+                let sent: i32 = c.get("sent_count");
+                let delivered: i32 = c.get("delivered_count");
                 serde_json::json!({
-                    "id": c.id,
-                    "name": c.name,
-                    "type": c.r#type,
-                    "status": c.status,
-                    "total_recipients": c.total_recipients,
-                    "sent_count": c.sent_count,
-                    "delivered_count": c.delivered_count,
-                    "read_count": c.read_count,
-                    "failed_count": c.failed_count,
-                    "delivery_rate": if c.sent_count > 0 {
-                        (c.delivered_count as f64 / c.sent_count as f64) * 100.0
-                    } else { 0.0 },
-                    "scheduled_at": c.scheduled_at,
-                    "started_at": c.started_at,
-                    "completed_at": c.completed_at,
-                    "created_at": c.created_at,
+                    "id": c.get::<Uuid, _>("id"),
+                    "name": c.get::<String, _>("name"),
+                    "type": c.get::<Option<String>, _>("type"),
+                    "status": c.get::<Option<String>, _>("status"),
+                    "total_recipients": c.get::<i32, _>("total_recipients"),
+                    "sent_count": sent,
+                    "delivered_count": delivered,
+                    "read_count": c.get::<i32, _>("read_count"),
+                    "failed_count": c.get::<i32, _>("failed_count"),
+                    "delivery_rate": if sent > 0 { (delivered as f64 / sent as f64) * 100.0 } else { 0.0 },
+                    "scheduled_at": c.get::<Option<chrono::DateTime<chrono::Utc>>, _>("scheduled_at"),
+                    "started_at": c.get::<Option<chrono::DateTime<chrono::Utc>>, _>("started_at"),
+                    "completed_at": c.get::<Option<chrono::DateTime<chrono::Utc>>, _>("completed_at"),
+                    "created_at": c.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
                 })
             })
             .collect();
@@ -320,6 +336,7 @@ impl<'a> CampaignService<'a> {
                         "template_name": template_name,
                         "language": language.as_deref().unwrap_or("en_US"),
                         "components": [],
+                        "variable_mappings": campaign.buttons.clone().unwrap_or(serde_json::json!({})),
                     })
                     .to_string()
                 })
@@ -374,6 +391,17 @@ impl<'a> CampaignService<'a> {
             "UPDATE campaigns SET status = 'scheduled', scheduled_at = $1 WHERE id = $2 AND organization_id = $3 AND status = 'draft'",
             req.scheduled_at, id, org_id
         )
+        .execute(&self.state.db)
+        .await
+        .map_err(AppError::Database)?;
+
+        sqlx::query(
+            r#"INSERT INTO campaign_schedules (organization_id, campaign_id, frequency, next_run_at, status)
+               VALUES ($1, $2, 'once', $3, 'active')"#,
+        )
+        .bind(org_id)
+        .bind(id)
+        .bind(req.scheduled_at)
         .execute(&self.state.db)
         .await
         .map_err(AppError::Database)?;

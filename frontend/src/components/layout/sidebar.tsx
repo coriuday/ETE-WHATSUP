@@ -5,121 +5,254 @@ import { usePathname } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import { cn } from "@/lib/utils";
 import {
-  MessageSquare,
   LayoutDashboard,
-  Smartphone,
-  Users,
-  FileText,
-  Send,
   Inbox,
-  Calendar,
+  Users,
+  Send,
   Zap,
+  FileText,
+  Calendar,
+  Smartphone,
   Shield,
+  BarChart3,
+  Plug,
   CreditCard,
   Settings,
   Menu,
+  PanelLeft,
 } from "lucide-react";
+import { BrandLogo, BrandMark } from "@/components/brand/logo";
 
 interface SidebarProps {
   isOpen: boolean;
   setIsOpen: (isOpen: boolean) => void;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
 }
 
-export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
+type NavItem = {
+  name: string;
+  href: string;
+  soon?: boolean;
+  admin?: boolean;
+};
+
+type NavGroup = {
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  items: NavItem[];
+};
+
+export default function Sidebar({ isOpen, setIsOpen, collapsed, onToggleCollapse }: SidebarProps) {
   const pathname = usePathname();
   const { user } = useAuthStore();
+  const isAdmin = user?.role === "super_admin" || user?.role === "business_admin";
 
-  const isSuperAdmin = user?.role === "super_admin";
-  const isBusinessAdmin = user?.role === "business_admin";
-
-  const navigation = [
-    { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
-    { name: "WhatsApp Accounts", href: "/whatsapp", icon: Smartphone },
-    { name: "Contacts", href: "/contacts", icon: Users },
-    { name: "Templates", href: "/templates", icon: FileText },
-    { name: "Campaigns", href: "/campaigns", icon: Send },
-    { name: "Inbox Chat", href: "/inbox", icon: Inbox },
-    { name: "Schedules", href: "/schedules", icon: Calendar },
-    { name: "Automations", href: "/automation", icon: Zap },
-    { 
-      name: "Team Management", 
-      href: "/team", 
+  const groups: NavGroup[] = [
+    {
+      label: "Overview",
+      icon: LayoutDashboard,
+      items: [
+        { name: "Dashboard", href: "/dashboard" },
+        { name: "Activity", href: "/activity", soon: true },
+        { name: "Notifications", href: "/notifications", soon: true },
+      ],
+    },
+    {
+      label: "Inbox",
+      icon: Inbox,
+      items: [
+        { name: "All", href: "/inbox" },
+        { name: "Unassigned", href: "/inbox/unassigned" },
+        { name: "Mine", href: "/inbox/mine" },
+        { name: "Closed", href: "/inbox/closed" },
+      ],
+    },
+    {
+      label: "Contacts",
+      icon: Users,
+      items: [
+        { name: "All Contacts", href: "/contacts" },
+        { name: "Lists", href: "/contacts?tab=lists" },
+        { name: "Tags", href: "/contacts?tab=tags" },
+        { name: "Segments", href: "/contacts?tab=segments" },
+        { name: "Import", href: "/contacts?tab=import" },
+        { name: "Export", href: "/contacts?tab=export" },
+      ],
+    },
+    {
+      label: "Campaigns",
+      icon: Send,
+      items: [
+        { name: "All Campaigns", href: "/campaigns" },
+        { name: "Create Campaign", href: "/campaigns/new" },
+        { name: "Drafts", href: "/campaigns?status=draft" },
+        { name: "Scheduled", href: "/campaigns?status=scheduled" },
+        { name: "Running", href: "/campaigns?status=running" },
+        { name: "Completed", href: "/campaigns?status=completed" },
+      ],
+    },
+    {
+      label: "Automations",
+      icon: Zap,
+      items: [{ name: "Flows", href: "/automation" }, { name: "Execution Logs", href: "/automation?tab=logs" }],
+    },
+    {
+      label: "Templates",
+      icon: FileText,
+      items: [
+        { name: "WhatsApp Templates", href: "/templates" },
+        { name: "Quick Replies", href: "/templates?tab=quick-replies" },
+      ],
+    },
+    {
+      label: "Schedules",
+      icon: Calendar,
+      items: [{ name: "Campaign Schedules", href: "/schedules" }],
+    },
+    {
+      label: "WhatsApp",
+      icon: Smartphone,
+      items: [
+        { name: "Accounts", href: "/whatsapp" },
+        { name: "Health", href: "/whatsapp?tab=health" },
+      ],
+    },
+    {
+      label: "Team",
       icon: Shield,
-      hidden: !isSuperAdmin && !isBusinessAdmin 
+      items: [
+        { name: "Members", href: "/team", admin: true },
+        { name: "Audit Log", href: "/team?tab=audit", admin: true },
+      ],
     },
-    { 
-      name: "Plans & Billing", 
-      href: "/billing", 
+    {
+      label: "Analytics",
+      icon: BarChart3,
+      items: [
+        { name: "Overview", href: "/analytics" },
+        { name: "Campaign Analytics", href: "/analytics?tab=campaigns" },
+        { name: "Delivery Analytics", href: "/analytics?tab=delivery" },
+      ],
+    },
+    {
+      label: "Integrations",
+      icon: Plug,
+      items: [
+        { name: "n8n", href: "/integrations" },
+        { name: "Webhooks", href: "/integrations?tab=webhooks" },
+      ],
+    },
+    {
+      label: "Billing",
       icon: CreditCard,
-      hidden: !isSuperAdmin && !isBusinessAdmin 
+      items: [
+        { name: "Plan & Usage", href: "/billing", admin: true },
+        { name: "Invoices", href: "/billing?tab=invoices", admin: true, soon: true },
+      ],
     },
-    { name: "Settings", href: "/settings", icon: Settings },
+    {
+      label: "Settings",
+      icon: Settings,
+      items: [
+        { name: "Workspace", href: "/settings" },
+        { name: "Security", href: "/settings?tab=security" },
+      ],
+    },
   ];
 
   return (
     <aside
       className={cn(
-        "fixed inset-y-0 left-0 z-40 w-64 bg-slate-950 border-r border-white/5 flex flex-col transform transition-transform duration-300 md:translate-x-0 md:static md:h-screen",
-        isOpen ? "translate-x-0" : "-translate-x-0 md:translate-x-0 hidden md:flex"
+        "fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border bg-card md:static md:h-screen",
+        collapsed ? "md:w-16" : "w-60",
+        isOpen ? "translate-x-0 w-60" : "-translate-x-full md:translate-x-0",
+        "transition-[width,transform]"
       )}
     >
-      {/* Brand Header */}
-      <div className="h-16 px-6 flex items-center justify-between border-b border-white/5">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-primary to-emerald-500 flex items-center justify-center shadow-lg shadow-primary/20">
-            <MessageSquare className="w-4.5 h-4.5 text-primary-foreground" />
-          </div>
-          <span className="font-bold tracking-tight text-white">WhatsUp</span>
-        </div>
+      <div className="flex h-14 items-center justify-between border-b border-border px-3">
+        <Link href="/dashboard" className="flex items-center gap-2 overflow-hidden">
+          {collapsed ? (
+            <BrandMark />
+          ) : (
+            <BrandLogo href={null} wordmark="WhatsUp" />
+          )}
+        </Link>
         <button
           onClick={() => setIsOpen(false)}
-          className="md:hidden text-muted-foreground hover:text-white"
+          className="text-muted-foreground md:hidden"
+          aria-label="Close navigation"
         >
-          <Menu className="w-5 h-5" />
+          <Menu className="h-5 w-5" />
+        </button>
+        <button
+          type="button"
+          onClick={onToggleCollapse}
+          className="hidden rounded-md p-1 text-muted-foreground hover:bg-accent md:inline-flex"
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          <PanelLeft className="h-4 w-4" />
         </button>
       </div>
 
-      {/* Nav Menu */}
-      <nav className="flex-1 px-4 py-6 overflow-y-auto space-y-1">
-        {navigation.map((item) => {
-          if (item.hidden) return null;
-          const isActive = pathname.startsWith(item.href);
-          const Icon = item.icon;
-
+      <nav className="flex-1 overflow-y-auto px-2 py-4">
+        {groups.map((group) => {
+          const visible = group.items.filter((i) => !i.admin || isAdmin);
+          if (!visible.length) return null;
+          const Icon = group.icon;
+          const primaryHref = visible[0].href;
+          const groupActive = visible.some((item) => pathname === item.href.split("?")[0]);
+          if (collapsed) {
+            return (
+              <Link
+                key={group.label}
+                href={primaryHref}
+                title={group.label}
+                className={cn(
+                  "mb-1 flex h-9 items-center justify-center rounded-lg",
+                  groupActive ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-accent"
+                )}
+              >
+                <Icon className="h-4 w-4" />
+              </Link>
+            );
+          }
           return (
-            <Link
-              key={item.name}
-              href={item.href}
-              className={cn(
-                "group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200",
-                isActive
-                  ? "bg-primary/10 text-primary border border-primary/10 shadow-sm"
-                  : "text-muted-foreground hover:bg-white/5 hover:text-white"
-              )}
-            >
-              <Icon className={cn("w-4.5 h-4.5 transition-colors", isActive ? "text-primary" : "text-muted-foreground/60 group-hover:text-white")} />
-              <span>{item.name}</span>
-            </Link>
+            <div key={group.label} className="mb-5">
+              <p className="mb-1.5 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                {group.label}
+              </p>
+              <ul className="space-y-0.5">
+                {visible.map((item) => {
+                  const path = item.href.split("?")[0];
+                  const active = !item.soon && pathname === path;
+                  return (
+                    <li key={item.name}>
+                      {item.soon ? (
+                        <span className="flex items-center justify-between rounded-lg px-2 py-1.5 text-sm text-muted-foreground/70">
+                          {item.name}
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium">Soon</span>
+                        </span>
+                      ) : (
+                        <Link
+                          href={item.href}
+                          onClick={() => setIsOpen(false)}
+                          className={cn(
+                            "block rounded-lg px-2 py-1.5 text-sm",
+                            active ? "bg-primary/10 font-medium text-primary" : "text-foreground hover:bg-accent"
+                          )}
+                        >
+                          {item.name}
+                        </Link>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           );
         })}
       </nav>
-
-      {/* User Info Foot */}
-      {user && (
-        <div className="p-4 border-t border-white/5 bg-slate-950/50">
-          <div className="flex items-center gap-3 px-2 py-1.5">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-primary to-accent-gradient flex items-center justify-center font-bold text-sm text-primary-foreground uppercase shadow-md shadow-primary/10">
-              {(user.fullName || "").slice(0, 2)}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-bold text-white truncate">{user.fullName}</p>
-              <p className="text-[10px] text-muted-foreground capitalize mt-0.5 font-medium">
-                {user.role.replace("_", " ")}
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
     </aside>
   );
 }

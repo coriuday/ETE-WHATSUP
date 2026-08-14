@@ -27,29 +27,40 @@ impl<'a> ContactService<'a> {
         use crate::models::pagination::{PaginatedResponse, PaginationQuery};
         let pq = PaginationQuery { page: query.page, limit: query.limit };
 
-        let total: i64 = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM contacts WHERE organization_id = $1 AND deleted_at IS NULL",
-            org_id
+        let search = query.search.clone().unwrap_or_default();
+        let tags = query.tags.clone().unwrap_or_default();
+        let total: i64 = sqlx::query_scalar::<_, Option<i64>>(
+            r#"SELECT COUNT(*) FROM contacts
+               WHERE organization_id = $1 AND deleted_at IS NULL
+                 AND ($2 = '' OR phone_number ILIKE '%' || $2 || '%' OR coalesce(first_name,'') ILIKE '%' || $2 || '%' OR coalesce(last_name,'') ILIKE '%' || $2 || '%')
+                 AND ($3 = '' OR $3 = ANY(tags))"#,
         )
+        .bind(org_id)
+        .bind(&search)
+        .bind(&tags)
         .fetch_one(&self.state.db)
         .await
         .map_err(AppError::Database)?
         .unwrap_or(0);
 
-        let contacts = sqlx::query!(
+        let contacts = sqlx::query(
             r#"
             SELECT id, phone_number, first_name, last_name, email,
                    wa_status::text, wa_opted_in, tags, source::text,
                    last_contacted_at, last_replied_at, created_at
             FROM contacts
             WHERE organization_id = $1 AND deleted_at IS NULL
+              AND ($4 = '' OR phone_number ILIKE '%' || $4 || '%' OR coalesce(first_name,'') ILIKE '%' || $4 || '%' OR coalesce(last_name,'') ILIKE '%' || $4 || '%')
+              AND ($5 = '' OR $5 = ANY(tags))
             ORDER BY created_at DESC
             LIMIT $2 OFFSET $3
             "#,
-            org_id,
-            pq.limit_i64(),
-            pq.offset()
         )
+        .bind(org_id)
+        .bind(pq.limit_i64())
+        .bind(pq.offset())
+        .bind(&search)
+        .bind(&tags)
         .fetch_all(&self.state.db)
         .await
         .map_err(AppError::Database)?;
@@ -57,19 +68,20 @@ impl<'a> ContactService<'a> {
         let data = contacts
             .into_iter()
             .map(|c| {
+                use sqlx::Row;
                 serde_json::json!({
-                    "id": c.id,
-                    "phone_number": c.phone_number,
-                    "first_name": c.first_name,
-                    "last_name": c.last_name,
-                    "email": c.email,
-                    "wa_status": c.wa_status,
-                    "wa_opted_in": c.wa_opted_in,
-                    "tags": c.tags,
-                    "source": c.source,
-                    "last_contacted_at": c.last_contacted_at,
-                    "last_replied_at": c.last_replied_at,
-                    "created_at": c.created_at,
+                    "id": c.get::<Uuid, _>("id"),
+                    "phone_number": c.get::<String, _>("phone_number"),
+                    "first_name": c.try_get::<Option<String>, _>("first_name").ok().flatten(),
+                    "last_name": c.try_get::<Option<String>, _>("last_name").ok().flatten(),
+                    "email": c.try_get::<Option<String>, _>("email").ok().flatten(),
+                    "wa_status": c.try_get::<Option<String>, _>("wa_status").ok().flatten(),
+                    "wa_opted_in": c.try_get::<bool, _>("wa_opted_in").ok(),
+                    "tags": c.try_get::<Vec<String>, _>("tags").ok().unwrap_or_default(),
+                    "source": c.try_get::<Option<String>, _>("source").ok().flatten(),
+                    "last_contacted_at": c.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_contacted_at").ok().flatten(),
+                    "last_replied_at": c.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_replied_at").ok().flatten(),
+                    "created_at": c.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
                 })
             })
             .collect();
@@ -126,6 +138,13 @@ impl<'a> ContactService<'a> {
             contact_id: id,
             org_id,
         }).await;
+        crate::services::automation_engine::dispatch(
+            self.state,
+            org_id,
+            "contact.created",
+            serde_json::json!({ "contact_id": id }),
+        )
+        .await;
 
         self.get_contact(org_id, id).await
     }

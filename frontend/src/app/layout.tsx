@@ -1,16 +1,22 @@
 import type { Metadata } from "next";
-import { Outfit } from "next/font/google";
+import { Inter, Source_Serif_4 } from "next/font/google";
 import ClientProviders from "./providers";
 import "./globals.css";
 
-const outfit = Outfit({
+const inter = Inter({
   subsets: ["latin"],
   variable: "--font-sans",
 });
 
+const sourceSerif = Source_Serif_4({
+  subsets: ["latin"],
+  variable: "--font-serif",
+});
+
 export const metadata: Metadata = {
-  title: "WhatsUp — Enterprise WhatsApp Bulk Messaging Platform",
-  description: "Scale your customer outreach, run automated sequence campaigns, and manage real-time conversations.",
+  title: "ChatBridge — WhatsApp inbox, campaigns, and automations",
+  description:
+    "ETE ChatBridge API: shared inbox, bulk campaigns, contacts, and automations. Develop against a mock WhatsApp provider, then switch to Meta.",
 };
 
 export default function RootLayout({
@@ -19,13 +25,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${outfit.variable} dark`} suppressHydrationWarning>
-      <body className="font-sans antialiased bg-background text-foreground min-h-screen" suppressHydrationWarning>
-        <ClientProviders>
-          {children}
-        </ClientProviders>
+    <html lang="en" className={`${inter.variable} ${sourceSerif.variable}`} suppressHydrationWarning>
+      <body className="font-sans antialiased bg-background text-foreground min-h-screen">
+        <ClientProviders>{children}</ClientProviders>
       </body>
     </html>
   );
 }
-

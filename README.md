@@ -21,7 +21,7 @@ ete_whatsup/
 │   └── api/                # Axum REST API in Rust (lib + binary)
 ├── frontend/               # Next.js 15 Dashboard & Auth
 ├── db/
-│   └── migrations/         # Database migrations (001 – 015)
+│   └── migrations/         # Database migrations (001 – 017)
 ├── infrastructure/
 │   ├── nginx/              # Nginx reverse proxy configuration
 │   ├── redis/              # Redis server configuration
@@ -72,7 +72,7 @@ This boots up:
 *   **Redis** on `http://localhost:6379` (rate limiting + auth session cache — not the message job queue)
 
 ### Step 3: Run Database Migrations
-Apply SQL files in order (`db/migrations/001` … `015`) against your Postgres database:
+Apply SQL files in order (`db/migrations/001` … `017`) against your Postgres database.
 ```bash
 # Example with psql against Compose postgres
 psql "$DATABASE_URL" -f db/migrations/001_....sql

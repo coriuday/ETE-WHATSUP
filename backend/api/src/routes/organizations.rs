@@ -15,6 +15,7 @@ pub fn router(state: AppState) -> Router {
         .route("/:id/members", get(list_members).post(invite_member))
         .route("/:id/members/:user_id", delete(remove_member))
         .route("/:id/usage", get(get_usage))
+        .route("/:id/audit", get(list_audit))
         .with_state(state)
 }
 
@@ -189,5 +190,35 @@ async fn get_usage(State(state): State<AppState>, RequireOrgViewer(auth): Requir
     Ok(Json(ApiResponse::ok(serde_json::json!({
         "contacts": { "used": contact_count, "limit": o.max_contacts },
         "messages": { "used_this_month": o.msgs_sent_this_month, "limit": o.monthly_msg_quota },
+    }))))
+}
+
+async fn list_audit(
+    State(state): State<AppState>,
+    RequireOrgViewer(auth): RequireOrgViewer,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    if auth.role != crate::models::user::UserRole::SuperAdmin && Some(id) != auth.org_id {
+        return Err(AppError::Forbidden);
+    }
+    let rows = sqlx::query(
+        r#"SELECT id, action, resource_type, resource_id, created_at, user_id
+           FROM audit_logs WHERE organization_id = $1
+           ORDER BY created_at DESC LIMIT 100"#,
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+    Ok(Json(ApiResponse::ok(serde_json::json!({
+        "events": rows.iter().map(|r| {
+            use sqlx::Row;
+            serde_json::json!({
+            "id": r.get::<Uuid, _>("id"), "action": r.get::<String, _>("action"),
+            "resource_type": r.try_get::<Option<String>, _>("resource_type").ok().flatten(),
+            "resource_id": r.try_get::<Option<Uuid>, _>("resource_id").ok().flatten(),
+            "created_at": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+            "user_id": r.try_get::<Option<Uuid>, _>("user_id").ok().flatten()
+        })}).collect::<Vec<_>>()
     }))))
 }

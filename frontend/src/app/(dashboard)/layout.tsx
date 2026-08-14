@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import { useAuthStore } from "@/store/authStore";
 import DashboardShell from "@/components/layout/dashboard-shell";
@@ -23,7 +23,7 @@ export default function DashboardLayout({
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-950">
+      <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="w-10 h-10 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
       </div>
     );
@@ -33,5 +33,11 @@ export default function DashboardLayout({
     return null; // will redirect via useEffect
   }
 
-  return <DashboardShell>{children}</DashboardShell>;
+  return (
+    <DashboardShell>
+      <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading…</div>}>
+        {children}
+      </Suspense>
+    </DashboardShell>
+  );
 }

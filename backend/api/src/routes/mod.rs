@@ -9,6 +9,8 @@ pub mod whatsapp;
 pub mod analytics;
 pub mod schedules;
 pub mod webhooks;
+pub mod automations;
+pub mod dev_mock;
 
 use axum::{extract::State, routing::get, Json, Router};
 use serde_json::json;
@@ -59,12 +61,13 @@ pub fn create_router(state: AppState) -> Router {
         .nest("/analytics", analytics::router(state.clone()))
         .nest("/schedules", schedules::router(state.clone()))
         .nest("/messages", messages::router(state.clone()))
+        .nest("/automations", automations::router(state.clone()))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::middleware::rate_limit::api_rate_limit,
         ));
 
-    Router::new()
+    let mut router = Router::new()
         .route("/api/v1/health", get(health_live))
         .route("/api/v1/health/live", get(health_live))
         .route(
@@ -85,5 +88,11 @@ pub fn create_router(state: AppState) -> Router {
                 state.clone(),
                 crate::middleware::rate_limit::webhook_rate_limit,
             )),
-        )
+        );
+
+    if state.config.enable_mock_provider {
+        router = router.nest("/api/v1/dev/mock", dev_mock::router(state.clone()));
+    }
+
+    router
 }

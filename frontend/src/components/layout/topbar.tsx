@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { useAuthStore } from "@/store/authStore";
-import { Menu, LogOut, Building, ChevronDown } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Menu, LogOut, Building, Moon, Sun, Search } from "lucide-react";
+import { useTheme } from "next-themes";
+import { Avatar, Dropdown, DropdownContent, DropdownItem, DropdownTrigger, IconButton, CommandMenu } from "@/components/ui";
 
 interface TopbarProps {
   onMenuClick: () => void;
@@ -11,65 +12,58 @@ interface TopbarProps {
 
 export default function Topbar({ onMenuClick }: TopbarProps) {
   const { user, organization, logout } = useAuthStore();
-  const [profileOpen, setProfileOpen] = useState(false);
+  const { theme, setTheme } = useTheme();
+  const [commandOpen, setCommandOpen] = useState(false);
 
   return (
-    <header className="h-16 px-6 border-b border-white/5 bg-slate-950/20 backdrop-blur-md flex items-center justify-between sticky top-0 z-30">
-      {/* Sidebar Toggle & Org Indicator */}
-      <div className="flex items-center gap-4">
+    <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-border bg-card px-4">
+      <div className="flex items-center gap-3">
         <button
           onClick={onMenuClick}
-          className="p-1.5 rounded-lg border border-white/10 text-muted-foreground hover:text-white hover:bg-white/5 md:hidden"
+          className="rounded-lg border border-border p-1.5 text-muted-foreground md:hidden"
+          aria-label="Open navigation"
         >
-          <Menu className="w-5 h-5" />
+          <Menu className="h-5 w-5" />
         </button>
-
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white">
-          <Building className="w-4 h-4 text-primary" />
-          <span className="font-semibold">{organization?.name || "No Organization"}</span>
+        <div className="flex items-center gap-2 rounded-lg border border-border px-2.5 py-1 text-xs">
+          <Building className="h-3.5 w-3.5 text-primary" />
+          <span className="font-medium">{organization?.name || "No workspace"}</span>
         </div>
       </div>
 
-      {/* User Actions */}
-      <div className="flex items-center gap-4 relative">
+      <div className="flex items-center gap-2">
         <button
-          onClick={() => setProfileOpen(!profileOpen)}
-          className="flex items-center gap-2 hover:opacity-90 transition-opacity focus:outline-none"
+          type="button"
+          onClick={() => setCommandOpen(true)}
+          className="hidden h-9 items-center gap-2 rounded-lg border border-border px-3 text-sm text-muted-foreground hover:bg-accent sm:flex"
         >
-          <div className="w-8 h-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center font-bold text-xs text-primary uppercase">
-            {user?.fullName.slice(0, 2) || "U"}
-          </div>
-          <span className="hidden sm:block text-xs font-semibold text-white">{user?.fullName}</span>
-          <ChevronDown className="w-4 h-4 text-muted-foreground" />
+          <Search className="h-4 w-4" />
+          Jump to…
+          <kbd className="rounded border border-border bg-muted px-1.5 text-[10px]">⌘K</kbd>
         </button>
-
-        {/* Dropdown Menu */}
-        {profileOpen && (
-          <>
-            <div
-              className="fixed inset-0 z-40"
-              onClick={() => setProfileOpen(false)}
-            />
-            <div className="absolute right-0 top-full mt-2 w-48 rounded-xl border border-white/10 bg-slate-900 p-2 shadow-2xl z-50 animate-in fade-in duration-100">
-              <div className="px-3 py-2 border-b border-white/5 mb-1 text-left">
-                <p className="text-xs font-bold text-white">{user?.fullName}</p>
-                <p className="text-[10px] text-muted-foreground truncate">{user?.email}</p>
-              </div>
-
-              <button
-                onClick={() => {
-                  setProfileOpen(false);
-                  logout();
-                }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-semibold text-destructive hover:bg-destructive/10 rounded-lg transition-colors text-left"
-              >
-                <LogOut className="w-4 h-4" />
-                Sign Out
-              </button>
-            </div>
-          </>
-        )}
+        <IconButton aria-label="Open command" className="sm:hidden" onClick={() => setCommandOpen(true)}>
+          <Search className="h-4 w-4" />
+        </IconButton>
+        <IconButton aria-label="Toggle theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+          <Sun className="h-4 w-4 dark:hidden" />
+          <Moon className="hidden h-4 w-4 dark:block" />
+        </IconButton>
+        <Dropdown>
+          <DropdownTrigger asChild>
+            <button className="flex items-center gap-2 rounded-lg px-1.5 py-1 hover:bg-accent">
+              <Avatar name={user?.fullName} />
+              <span className="hidden text-xs font-medium sm:block">{user?.fullName}</span>
+            </button>
+          </DropdownTrigger>
+          <DropdownContent align="end">
+            <DropdownItem onSelect={() => logout()}>
+              <LogOut className="h-4 w-4" />
+              Sign out
+            </DropdownItem>
+          </DropdownContent>
+        </Dropdown>
       </div>
+      <CommandMenu open={commandOpen} onOpenChange={setCommandOpen} />
     </header>
   );
 }

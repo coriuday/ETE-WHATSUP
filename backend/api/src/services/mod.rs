@@ -10,4 +10,5 @@ pub mod recipient_resolver;
 pub mod worker;
 pub mod scheduler;
 pub mod audit_service;
+pub mod automation_engine;
 pub mod webhook_service;

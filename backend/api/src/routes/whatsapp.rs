@@ -14,22 +14,38 @@ pub fn router(state: AppState) -> Router {
         .route("/accounts/:id", get(get_account).delete(disconnect_account))
         .route("/accounts/:id/profile", put(update_profile))
         .route("/accounts/:id/sync", post(sync_account))
+        .route("/accounts/:id/health", get(account_health))
         .with_state(state)
 }
 
 async fn list_accounts(State(state): State<AppState>, RequireOrgViewer(auth): RequireOrgViewer) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
     let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
-    let accounts = sqlx::query!(
-        r#"SELECT id, display_name, phone_number, status::text, account_type::text, quality_rating, total_msgs_sent, connected_at
+    let accounts = sqlx::query(
+        r#"SELECT id, display_name, phone_number, status::text, account_type::text, quality_rating,
+                  total_msgs_sent, connected_at, provider, last_health_status, last_sync_at
            FROM whatsapp_accounts WHERE organization_id = $1 AND deleted_at IS NULL"#,
-        org_id
-    ).fetch_all(&state.db).await.map_err(AppError::Database)?;
+    )
+    .bind(org_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(AppError::Database)?;
 
-    let data: Vec<serde_json::Value> = accounts.iter().map(|a| serde_json::json!({
-        "id": a.id, "display_name": a.display_name, "phone_number": a.phone_number,
-        "status": a.status, "type": a.account_type, "quality_rating": a.quality_rating,
-        "total_msgs_sent": a.total_msgs_sent, "connected_at": a.connected_at
-    })).collect();
+    let data: Vec<serde_json::Value> = accounts.iter().map(|a| {
+        use sqlx::Row;
+        serde_json::json!({
+            "id": a.get::<uuid::Uuid, _>("id"),
+            "display_name": a.get::<String, _>("display_name"),
+            "phone_number": a.get::<String, _>("phone_number"),
+            "status": a.try_get::<Option<String>, _>("status").ok().flatten(),
+            "type": a.try_get::<Option<String>, _>("account_type").ok().flatten(),
+            "quality_rating": a.try_get::<Option<String>, _>("quality_rating").ok().flatten(),
+            "total_msgs_sent": a.try_get::<i64, _>("total_msgs_sent").ok(),
+            "connected_at": a.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("connected_at").ok().flatten(),
+            "provider": a.try_get::<String, _>("provider").ok().unwrap_or_else(|| "mock".into()),
+            "last_health_status": a.try_get::<Option<String>, _>("last_health_status").ok().flatten(),
+            "last_sync_at": a.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("last_sync_at").ok().flatten(),
+        })
+    }).collect();
 
     Ok(Json(ApiResponse::ok(serde_json::json!({ "accounts": data }))))
 }
@@ -49,7 +65,7 @@ async fn connect_account(
     let id = sqlx::query_scalar!(
         r#"INSERT INTO whatsapp_accounts (organization_id, display_name, phone_number, phone_number_id, waba_id, access_token_enc, status)
            VALUES ($1, $2, $3, $4, $5, $6, 'connected'::wa_account_status) RETURNING id"#,
-        org_id, req.display_name, req.phone_number, req.phone_number_id, req.waba_id, encrypted_token
+        org_id, req.display_name, req.phone_number, req.phone_number_id, req.waba_id.as_deref().unwrap_or("mock"), encrypted_token
     ).fetch_one(&state.db).await.map_err(AppError::Database)?;
 
     Ok((StatusCode::CREATED, Json(ApiResponse::with_message(serde_json::json!({ "id": id }), "WhatsApp account connected"))))
@@ -125,5 +141,27 @@ async fn sync_account(
         "business_name": account.4,
         "synced_at": chrono::Utc::now(),
         "has_credentials": account.2.is_some(),
+    }))))
+}
+
+async fn account_health(
+    State(state): State<AppState>,
+    RequireOrgViewer(auth): RequireOrgViewer,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<ApiResponse<serde_json::Value>>> {
+    let org_id = auth.org_id.ok_or(AppError::Forbidden)?;
+    let account = crate::providers::dispatch::load_account(&state, id, org_id).await?;
+    let status = crate::providers::dispatch::health_check(&state, &account).await?;
+    let _ = sqlx::query(
+        "UPDATE whatsapp_accounts SET last_health_at = NOW(), last_health_status = $3 WHERE id = $1 AND organization_id = $2",
+    )
+    .bind(id)
+    .bind(org_id)
+    .bind(&status)
+    .execute(&state.db)
+    .await;
+    Ok(Json(ApiResponse::ok(serde_json::json!({
+        "provider": account.kind.as_str(),
+        "status": status
     }))))
 }

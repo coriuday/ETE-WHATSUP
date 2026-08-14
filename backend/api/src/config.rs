@@ -75,6 +75,13 @@ pub struct Config {
 
     // CORS
     pub allowed_origins: String,
+
+    #[serde(default = "default_messaging_provider")]
+    pub messaging_provider: String,
+    #[serde(default = "default_enable_mock")]
+    pub enable_mock_provider: bool,
+    #[serde(default)]
+    pub mock_failure_rate: f64,
 }
 
 fn default_auth_rate_limit() -> u64 {
@@ -85,6 +92,12 @@ fn default_webhook_rate_limit() -> u64 {
 }
 fn default_job_reclaim_mins() -> u64 {
     10
+}
+fn default_messaging_provider() -> String {
+    "mock".into()
+}
+fn default_enable_mock() -> bool {
+    true
 }
 
 impl Config {
@@ -115,6 +128,9 @@ impl Config {
             .set_default("meta_api_version", "v19.0")?
             .set_default("meta_api_base_url", "https://graph.facebook.com")?
             .set_default("allowed_origins", "http://localhost:3000")?
+            .set_default("messaging_provider", "mock")?
+            .set_default("enable_mock_provider", true)?
+            .set_default("mock_failure_rate", 0.0)?
             .add_source(config::Environment::default())
             .build()
             .context("Failed to build config")?;
@@ -166,7 +182,7 @@ impl Config {
                 );
             }
             if self.meta_wa_token.is_empty() {
-                tracing::warn!("META_WA_TOKEN is empty — WhatsApp sends will fail");
+                tracing::warn!("META_WA_TOKEN is empty — live Meta sends disabled; mock provider will be used");
             }
             if self.smtp_host.is_empty() {
                 tracing::warn!("SMTP_HOST is empty — email delivery disabled");

@@ -1,55 +1,49 @@
 # Local Development Runbook
 
-This guide covers the manual process to run the fullstack WhatsUp platform locally, bypassing the backend Docker builds for faster iteration and to avoid network timeouts.
+Preferred inner loop: Compose for data stores, Cargo + Next on the host.
 
-## Prerequisites
-- Docker & Docker Compose
-- Rust & Cargo
-- Node.js & npm
-
-## 1. Start the Infrastructure (Terminal 1)
-Instead of running `docker compose up -d` (which attempts to build the frontend and backend), we only want to start the database and storage services.
+## 1. Infrastructure
 
 ```powershell
-# Open a terminal in the root project folder
-cd C:\Users\DELL\IdeaProjects\ETE-WHATSUP
-
-# Start Postgres (Port 5434), Redis, MinIO, and n8n
 docker compose up -d postgres redis minio n8n
 ```
 
-## 2. Start the Backend API & Workers (Terminal 2)
-The backend API server and background workers are bundled into a single Rust binary (`whatsup-api`).
+Postgres is published on **5434**. Redis stays on the Docker network unless you map a port.
+
+## 2. Environment
 
 ```powershell
-# Open a second terminal
-cd C:\Users\DELL\IdeaProjects\ETE-WHATSUP\backend\api
+cp backend/api/.env.example backend/api/.env
+cp frontend/.env.local.example frontend/.env.local
+```
 
-# Run the API locally (defaults to port 8081)
+Point `DATABASE_URL` at `localhost:5434`. Set:
+
+```
+APP_PORT=8080
+MESSAGING_PROVIDER=mock
+ENABLE_MOCK_PROVIDER=true
+NEXT_PUBLIC_API_URL=http://localhost:8080/api/v1
+```
+
+Apply `db/migrations/*.sql` in order (001–017).
+
+## 3. API
+
+```powershell
+cd backend/api
 cargo run --bin whatsup-api
 ```
-*Note: If you get an `os error 10048`, port 8081 is already in use by a previous crashed instance. Find the process using `netstat -ano | findstr :8081` and kill it using `taskkill /PID <PID> /F`.*
 
-## 3. Start the Frontend (Terminal 3)
-The Next.js frontend connects to the backend running on `localhost:8081`.
+Listens on **8080** by default.
+
+## 4. Frontend
 
 ```powershell
-# Open a third terminal
-cd C:\Users\DELL\IdeaProjects\ETE-WHATSUP\frontend
-
-# Start the development server
-npm run dev
+cd frontend
+bun run dev
 ```
 
-## 4. Access the Platform
-- **Frontend App:** http://localhost:3000
-- **MinIO Console:** http://localhost:9001
-- **n8n Automation:** http://localhost:5678
+Open http://localhost:3000
 
-## Troubleshooting
-- **Postgres Authentication Failed:** Ensure you don't have another local Postgres instance stealing the port. Our `docker-compose.yml` maps to port `5434` to avoid this.
-- **Frontend Hydration Error:** If you see `data-qb-installed`, it is caused by a browser extension (like Quillbot) injecting tags into the DOM. This warning is suppressed in `layout.tsx` and can be ignored.
-- **Can't Login after Registering:** New accounts are created as `pending_verification`. Verify email via the link (or set `email_verified` / status in DB for local testing). Login is blocked until verified.
-- **Org-scoped 400/403:** Send `X-Organization-Id` with the active organization UUID. The frontend stores this in `active_org_id` cookie after login.
-- **SQLx compile:** `cargo check` / `clippy` require `DATABASE_URL` pointing at a migrated Postgres (or a prepared `.sqlx` offline cache).
-- **Redis role:** Redis is for rate limits and short-lived auth cache — campaign jobs use Postgres `message_queue_jobs`.
+See also `docs/mock-whatsapp.md` and `docs/env.md`.

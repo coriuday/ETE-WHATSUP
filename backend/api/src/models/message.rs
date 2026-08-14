@@ -3,17 +3,37 @@ use serde::{Deserialize, Serialize};
 use sqlx::Type;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Type, PartialEq)]
 #[sqlx(type_name = "message_status", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum MessageStatus {
     Queued,
     Sending,
+    Processing,
     Sent,
     Delivered,
     Read,
     Failed,
     Rejected,
+    Cancelled,
+    Retrying,
+}
+
+impl MessageStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Sending => "sending",
+            Self::Processing => "processing",
+            Self::Sent => "sent",
+            Self::Delivered => "delivered",
+            Self::Read => "read",
+            Self::Failed => "failed",
+            Self::Rejected => "rejected",
+            Self::Cancelled => "cancelled",
+            Self::Retrying => "retrying",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]

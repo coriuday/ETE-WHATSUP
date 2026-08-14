@@ -105,6 +105,33 @@ async fn get_overview(
     let total_delivered = campaign_data.total_delivered.unwrap_or(0);
     let total_read = campaign_data.total_read.unwrap_or(0);
 
+    let series = sqlx::query(
+        r#"
+        SELECT date_trunc('day', created_at)::date as day,
+               COUNT(*) FILTER (WHERE direction = 'outbound') as sent,
+               COUNT(*) FILTER (WHERE status = 'delivered') as delivered,
+               COUNT(*) FILTER (WHERE status = 'read') as read
+        FROM messages
+        WHERE organization_id = $1 AND created_at BETWEEN $2 AND $3
+        GROUP BY 1
+        ORDER BY 1
+        "#,
+    )
+    .bind(org_id)
+    .bind(from)
+    .bind(to)
+    .fetch_all(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
+    let conversations = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM conversations WHERE organization_id = $1 AND status = 'open'",
+        org_id
+    )
+    .fetch_one(&state.db)
+    .await
+    .map_err(AppError::Database)?;
+
     Ok(Json(ApiResponse::ok(serde_json::json!({
         "date_range": { "from": from, "to": to },
         "campaigns": {
@@ -126,7 +153,16 @@ async fn get_overview(
         "contacts": {
             "total":  contact_data.total_contacts.unwrap_or(0),
             "active": contact_data.active_contacts.unwrap_or(0),
-        }
+        },
+        "open_conversations": conversations.unwrap_or(0),
+        "timeseries": series.iter().map(|r| {
+            use sqlx::Row;
+            serde_json::json!({
+            "day": r.try_get::<Option<chrono::NaiveDate>, _>("day").ok().flatten(),
+            "sent": r.try_get::<Option<i64>, _>("sent").ok().flatten().unwrap_or(0),
+            "delivered": r.try_get::<Option<i64>, _>("delivered").ok().flatten().unwrap_or(0),
+            "read": r.try_get::<Option<i64>, _>("read").ok().flatten().unwrap_or(0)
+        })}).collect::<Vec<_>>()
     }))))
 }
 

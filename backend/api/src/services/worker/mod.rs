@@ -6,9 +6,15 @@ use tokio::time::{sleep, Duration};
 use uuid::Uuid;
 
 use crate::{
+    providers::{
+        dispatch::{load_account_for_campaign, send_template, send_text},
+        lifecycle::insert_outbound_sent,
+        OutboundTemplate, OutboundText,
+    },
     services::{
         audit_service::audit_log,
-        whatsapp_service::WhatsAppService,
+        automation_engine,
+        n8n_service::{N8nEvent, N8nService},
     },
     AppState,
 };
@@ -93,11 +99,11 @@ pub async fn start_campaign_worker(state: AppState, campaign_id: Uuid) {
         concurrency
     );
 
-    let wa_creds = match load_wa_credentials(&state, campaign_id).await {
+    let wa_creds = match load_account_for_campaign(&state, campaign_id).await {
         Ok(c) => Arc::new(c),
         Err(e) => {
             tracing::error!(
-                "Cannot start worker for campaign {}: failed to load WA credentials: {:?}",
+                "Cannot start worker for campaign {}: failed to load provider account: {:?}",
                 campaign_id,
                 e
             );
@@ -186,43 +192,9 @@ pub async fn start_campaign_worker(state: AppState, campaign_id: Uuid) {
     tracing::info!("Campaign worker finished for campaign {}", campaign_id);
 }
 
-struct WaCredentials {
-    wa_account_id: Uuid,
-    phone_number_id: String,
-    access_token: String,
-}
-
-async fn load_wa_credentials(state: &AppState, campaign_id: Uuid) -> anyhow::Result<WaCredentials> {
-    let wa = sqlx::query!(
-        r#"
-        SELECT wa.id, wa.phone_number_id, wa.access_token_enc
-        FROM whatsapp_accounts wa
-        JOIN campaigns c ON c.wa_account_id = wa.id
-        WHERE c.id = $1
-        "#,
-        campaign_id
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| anyhow::anyhow!("No WhatsApp account linked to campaign"))?;
-
-    let access_token = match wa.access_token_enc {
-        Some(enc) => {
-            crate::utils::encryption::decrypt(&enc, &state.config.encryption_key).unwrap_or_default()
-        }
-        None => String::new(),
-    };
-
-    Ok(WaCredentials {
-        wa_account_id: wa.id,
-        phone_number_id: wa.phone_number_id.unwrap_or_default(),
-        access_token,
-    })
-}
-
 async fn process_job(
     state: &AppState,
-    wa_creds: &WaCredentials,
+    wa_creds: &crate::providers::ProviderAccount,
     job_id: Uuid,
     campaign_id: Uuid,
     contact_id: Uuid,
@@ -316,7 +288,7 @@ async fn process_job(
 
 async fn dispatch_message(
     state: &AppState,
-    wa_creds: &WaCredentials,
+    account: &crate::providers::ProviderAccount,
     campaign_id: Uuid,
     contact_id: Uuid,
     payload: &serde_json::Value,
@@ -332,66 +304,72 @@ async fn dispatch_message(
     let org_id: Uuid = payload["org_id"]
         .as_str()
         .and_then(|s| Uuid::parse_str(s).ok())
-        .unwrap_or_default();
+        .unwrap_or(account.organization_id);
 
-    let wa_service = WhatsAppService::new(state);
-
-    let send_result = if let Some(template_name) = payload["template_name"].as_str() {
+    let result = if let Some(template_name) = payload["template_name"].as_str() {
         let language = payload["language"].as_str().unwrap_or("en_US");
-        let components = payload["components"]
+        let mut components = payload["components"]
             .as_array()
             .cloned()
             .unwrap_or_default();
-
-        wa_service
-            .send_template(
-                &wa_creds.phone_number_id,
-                &wa_creds.access_token,
-                &contact.phone_number,
-                template_name,
-                language,
+        if let Some(mappings) = payload["variable_mappings"].as_object() {
+            let params: Vec<serde_json::Value> = mappings
+                .values()
+                .map(|v| {
+                    serde_json::json!({
+                        "type": "text",
+                        "text": v.as_str().unwrap_or("")
+                    })
+                })
+                .collect();
+            if !params.is_empty() {
+                components.push(serde_json::json!({ "type": "body", "parameters": params }));
+            }
+        }
+        send_template(
+            state,
+            account,
+            OutboundTemplate {
+                to: contact.phone_number.clone(),
+                template_name: template_name.to_string(),
+                language: language.to_string(),
                 components,
-            )
-            .await
+            },
+        )
+        .await
     } else {
         let body = payload["message_body"]
             .as_str()
             .unwrap_or("Hello from WhatsUp!");
-
-        wa_service
-            .send_text(
-                &wa_creds.phone_number_id,
-                &wa_creds.access_token,
-                &contact.phone_number,
-                body,
-            )
-            .await
-    };
-
-    let response = send_result?;
-    let wa_message_id = response.messages.first().map(|m| m.id.clone());
-
-    let _ = sqlx::query(
-        r#"
-        INSERT INTO messages (
-            organization_id, wa_account_id, campaign_id, contact_id,
-            wa_message_id, direction, type, body, status
+        send_text(
+            state,
+            account,
+            OutboundText {
+                to: contact.phone_number.clone(),
+                body: body.to_string(),
+            },
         )
-        SELECT $1, $2, $3, $4, $5, 'outbound', 'text', $6, 'sent'
-        WHERE $5::text IS NULL
-           OR NOT EXISTS (SELECT 1 FROM messages WHERE wa_message_id = $5)
-        "#,
+        .await
+    }?;
+
+    let _ = insert_outbound_sent(
+        &state.db,
+        org_id,
+        account.id,
+        Some(campaign_id),
+        contact_id,
+        None,
+        &result.provider_message_id,
+        payload["message_body"].as_str().unwrap_or(""),
+        if payload.get("template_name").is_some() {
+            "template"
+        } else {
+            "text"
+        },
     )
-    .bind(org_id)
-    .bind(wa_creds.wa_account_id)
-    .bind(campaign_id)
-    .bind(contact_id)
-    .bind(wa_message_id.as_deref())
-    .bind(payload["message_body"].as_str().unwrap_or(""))
-    .execute(&state.db)
     .await;
 
-    Ok(wa_message_id)
+    Ok(Some(result.provider_message_id))
 }
 
 async fn check_campaign_complete(state: &AppState, campaign_id: Uuid) -> bool {
@@ -409,30 +387,54 @@ async fn check_campaign_complete(state: &AppState, campaign_id: Uuid) -> bool {
 }
 
 async fn complete_campaign(state: &AppState, campaign_id: Uuid) {
-    let result = sqlx::query!(
+    let stats = sqlx::query(
         r#"
         UPDATE campaigns
         SET status = 'completed', completed_at = NOW()
         WHERE id = $1 AND status = 'running'
+        RETURNING organization_id, sent_count, delivered_count
         "#,
-        campaign_id
     )
-    .execute(&state.db)
+    .bind(campaign_id)
+    .fetch_optional(&state.db)
     .await;
 
-    match result {
-        Ok(_) => {
+    match stats {
+        Ok(Some(row)) => {
+            use sqlx::Row;
+            let org_id: Uuid = row.get("organization_id");
+            let sent: i32 = row.get("sent_count");
+            let delivered: i32 = row.get("delivered_count");
             tracing::info!("Campaign {} marked as completed", campaign_id);
             audit_log(
                 state,
                 "campaign.completed",
                 None,
-                None,
+                Some(org_id),
                 Some("campaign"),
                 Some(campaign_id),
                 json!({ "campaign_id": campaign_id }),
             );
+            N8nService::new(state)
+                .fire_event(
+                    org_id,
+                    N8nEvent::CampaignCompleted {
+                        campaign_id,
+                        org_id,
+                        sent,
+                        delivered,
+                    },
+                )
+                .await;
+            automation_engine::dispatch(
+                state,
+                org_id,
+                "campaign.completed",
+                json!({ "campaign_id": campaign_id }),
+            )
+            .await;
         }
+        Ok(None) => {}
         Err(e) => {
             tracing::error!("Failed to mark campaign {} as completed: {:?}", campaign_id, e);
         }
