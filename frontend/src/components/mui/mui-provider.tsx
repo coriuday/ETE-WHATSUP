@@ -14,7 +14,7 @@ const theme = createTheme({
   },
   shape: { borderRadius: 14 },
   typography: {
-    fontFamily: "var(--font-sans), Inter, system-ui, sans-serif",
+    fontFamily: "var(--font-sans)",
     fontSize: 13,
   },
   components: {

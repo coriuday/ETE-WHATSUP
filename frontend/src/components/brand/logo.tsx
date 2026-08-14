@@ -16,7 +16,7 @@ export function BrandMark({ className }: { className?: string }) {
         "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#14B8A6] text-[11px] font-semibold tracking-wide text-white shadow-sm ring-1 ring-black/10",
         className
       )}
-      style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
+      style={{ fontFamily: "var(--font-serif)" }}
     >
       ETE
     </span>
@@ -41,7 +41,7 @@ export function BrandLogo({
               "text-[17px] font-semibold tracking-tight",
               inverted ? "text-white" : "text-[#0F3D3A] dark:text-white"
             )}
-            style={{ fontFamily: "var(--font-serif), Georgia, serif" }}
+            style={{ fontFamily: "var(--font-serif)" }}
           >
             {wordmark}
           </span>
