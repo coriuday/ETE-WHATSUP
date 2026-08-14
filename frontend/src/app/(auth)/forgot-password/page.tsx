@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import toast from "react-hot-toast";
+import { getErrorMessage } from "@/lib/api";
 import { AuthSplit } from "@/components/auth/auth-split";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,8 +24,7 @@ export default function ForgotPassword() {
       setIsSent(true);
       toast.success("Reset link sent successfully!");
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: string } } };
-      toast.error(axiosErr.response?.data?.error || "Failed to send reset link. Please verify your email.");
+      toast.error(getErrorMessage(err, "Failed to send reset link. Please verify your email."));
     } finally {
       setIsLoading(false);
     }

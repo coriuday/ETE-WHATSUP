@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useAuthStore } from "@/store/authStore";
 import { Eye, EyeOff, ShieldCheck } from "lucide-react";
 import toast from "react-hot-toast";
+import { getErrorMessage } from "@/lib/api";
 import { AuthSplit } from "@/components/auth/auth-split";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -75,12 +76,7 @@ export default function Login() {
         }
       }
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: { message?: string } | string } } };
-      const errorMsg =
-        (typeof axiosErr.response?.data?.error === "object"
-          ? axiosErr.response?.data?.error?.message
-          : axiosErr.response?.data?.error) || "Invalid credentials. Please try again.";
-      toast.error(typeof errorMsg === "string" ? errorMsg : "Login failed.");
+      toast.error(getErrorMessage(err, "Invalid credentials. Please try again."));
     } finally {
       setIsLoading(false);
     }

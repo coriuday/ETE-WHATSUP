@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuthStore } from "@/store/authStore";
 import toast from "react-hot-toast";
+import { getErrorMessage } from "@/lib/api";
 import { AuthSplit } from "@/components/auth/auth-split";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,12 +56,7 @@ export default function Register() {
       toast.success("Account created! Let's set up your organization.");
       router.push("/onboarding");
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { error?: { message?: string } | string } } };
-      const errorMsg =
-        (typeof axiosErr.response?.data?.error === "object"
-          ? axiosErr.response?.data?.error?.message
-          : axiosErr.response?.data?.error) || "Registration failed. Please try again.";
-      toast.error(typeof errorMsg === "string" ? errorMsg : "Registration failed.");
+      toast.error(getErrorMessage(err, "Registration failed. Please try again."));
     } finally {
       setIsLoading(false);
     }

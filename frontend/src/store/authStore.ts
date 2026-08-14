@@ -10,6 +10,7 @@ interface AuthState {
   activeOrgId: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  initError: string | null;
   hasOrganization: boolean;
   setUser: (user: User | null) => void;
   setOrganization: (org: Organization | null) => void;
@@ -18,12 +19,31 @@ interface AuthState {
   initialize: () => Promise<void>;
 }
 
+const INIT_TIMEOUT_MS = 8000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(label)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   organization: null,
   activeOrgId: getActiveOrgId(),
   isAuthenticated: false,
   isLoading: true,
+  initError: null,
   hasOrganization: false,
 
   setUser: (user) => set({ user, isAuthenticated: !!user }),
@@ -53,6 +73,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       activeOrgId: null,
       isAuthenticated: false,
       hasOrganization: false,
+      isLoading: false,
+      initError: null,
     });
     if (typeof window !== "undefined") {
       window.location.href = "/login";
@@ -60,11 +82,17 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   initialize: async () => {
-    set({ isLoading: true });
-    const accessToken = Cookies.get("access_token");
+    set({ isLoading: true, initError: null });
+    let accessToken: string | undefined;
+    try {
+      accessToken = Cookies.get("access_token");
+    } catch {
+      accessToken = undefined;
+    }
     if (!accessToken) {
       set({
         isLoading: false,
+        initError: null,
         isAuthenticated: false,
         user: null,
         hasOrganization: false,
@@ -73,10 +101,14 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
 
     try {
-      const user = await fetchMe();
+      const user = await withTimeout(fetchMe(), INIT_TIMEOUT_MS, "Auth initialization timed out");
       let organization: Organization | null = null;
       try {
-        const orgs = await listOrganizations();
+        const orgs = await withTimeout(
+          listOrganizations(),
+          INIT_TIMEOUT_MS,
+          "Organization lookup timed out"
+        );
         const savedId = getActiveOrgId();
         organization =
           orgs.find((o) => o.id === savedId) || orgs[0] || null;
@@ -94,6 +126,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         isAuthenticated: true,
         hasOrganization: !!organization,
         isLoading: false,
+        initError: null,
       });
     } catch (error) {
       console.error("Failed to initialize auth state", error);
@@ -107,6 +140,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         isAuthenticated: false,
         hasOrganization: false,
         isLoading: false,
+        initError: "Can't reach the API. Sign in again when the service is available.",
       });
     }
   },

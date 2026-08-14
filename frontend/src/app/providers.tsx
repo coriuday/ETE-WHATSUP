@@ -54,8 +54,21 @@ export default function ClientProviders({
   const pathname = usePathname();
 
   useEffect(() => {
-    initialize();
+    void initialize();
   }, [initialize]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const state = useAuthStore.getState();
+      if (!state.isLoading) return;
+      useAuthStore.setState({
+        isLoading: false,
+        isAuthenticated: false,
+        initError: "Can't reach the API. Sign in again when the service is available.",
+      });
+    }, 10000);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   if (isLoading && shouldBlockOnAuth(pathname || "")) {
     return (

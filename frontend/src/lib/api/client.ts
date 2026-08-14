@@ -5,6 +5,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api/v1
 
 export const api = axios.create({
   baseURL: API_URL,
+  timeout: 12000,
   headers: {
     "Content-Type": "application/json",
   },
@@ -23,7 +24,11 @@ export function setActiveOrgId(orgId: string | null) {
 
 export function getActiveOrgId(): string | null {
   if (activeOrgId) return activeOrgId;
-  return Cookies.get("active_org_id") || null;
+  try {
+    return Cookies.get("active_org_id") || null;
+  } catch {
+    return null;
+  }
 }
 
 api.interceptors.request.use(
@@ -87,7 +92,13 @@ api.interceptors.response.use(
 export function getErrorMessage(error: unknown, fallback = "Something went wrong"): string {
   if (axios.isAxiosError(error)) {
     const ax = error as AxiosError<{ error?: { message?: string } | string; message?: string }>;
-    const data = ax.response?.data;
+    if (!ax.response) {
+      if (ax.code === "ECONNABORTED") {
+        return "The API timed out. Please try again.";
+      }
+      return "Can't reach the API. Check your connection or try again later.";
+    }
+    const data = ax.response.data;
     if (data?.error) {
       if (typeof data.error === "string") return data.error;
       if (data.error.message) return data.error.message;

@@ -4,12 +4,19 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { getErrorMessage } from "@/lib/api";
 import { AuthSplit } from "@/components/auth/auth-split";
 import { Button } from "@/components/ui/button";
 
 export default function VerifyEmail() {
   return (
-    <Suspense fallback={null}>
+    <Suspense
+      fallback={
+        <AuthSplit title="Email verification" description="Loading…">
+          <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+        </AuthSplit>
+      }
+    >
       <VerifyEmailInner />
     </Suspense>
   );
@@ -36,9 +43,8 @@ function VerifyEmailInner() {
         setStatus("success");
         setMessage("Your email has been verified successfully! You can now log in.");
       } catch (err: unknown) {
-        const axiosErr = err as { response?: { data?: { error?: string } } };
         setStatus("error");
-        setMessage(axiosErr.response?.data?.error || "Email verification failed or the token has expired.");
+        setMessage(getErrorMessage(err, "Email verification failed or the token has expired."));
       }
     };
 

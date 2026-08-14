@@ -22,6 +22,7 @@ const PROTECTED_PREFIXES = [
 ];
 
 export function middleware(request: NextRequest) {
+  // `/`, marketing, and auth recovery pages stay public (not in `matcher`).
   const { pathname } = request.nextUrl;
   const accessToken = request.cookies.get("access_token")?.value;
 
